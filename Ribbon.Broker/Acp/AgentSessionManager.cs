@@ -57,7 +57,7 @@ internal sealed class AgentSessionManager : IAsyncDisposable
                 }
             }, cancellationToken).ConfigureAwait(false);
         }
-        catch (AcpRpcException exception) when (runtime.AuthenticationMethods.Count > 0)
+        catch (AcpRpcException exception) when (IsAuthenticationRequired(exception, runtime.AuthenticationMethods.Count))
         {
             _log.Info($"Agent {installed.Id} requires authentication before creating a session: {exception.Message}");
             return new SessionStartResponse
@@ -118,10 +118,11 @@ internal sealed class AgentSessionManager : IAsyncDisposable
         }, cancellationToken).ConfigureAwait(false);
     }
 
-    public Task CancelAsync(SessionCancelRequest request, CancellationToken cancellationToken)
+    public async Task CancelAsync(SessionCancelRequest request, CancellationToken cancellationToken)
     {
         var session = GetSession(request.SessionId);
-        return session.Runtime.Connection.NotifyAsync("session/cancel", new { sessionId = request.SessionId }, cancellationToken);
+        session.PendingPermissions.CancelAll();
+        await session.Runtime.Connection.NotifyAsync("session/cancel", new { sessionId = request.SessionId }, cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask DisposeAsync()
@@ -187,7 +188,7 @@ internal sealed class AgentSessionManager : IAsyncDisposable
     {
         if (!string.Equals(method, "session/request_permission", StringComparison.Ordinal))
         {
-            throw new InvalidOperationException($"Ribbon does not expose ACP client method '{method}'.");
+            throw new AcpRpcException(-32601, $"Ribbon does not expose ACP client method '{method}'.", null);
         }
 
         var sessionId = parameters.GetProperty("sessionId").GetString()
@@ -208,11 +209,22 @@ internal sealed class AgentSessionManager : IAsyncDisposable
             }).ToList()
         };
 
-        var response = await session.Client.RequestAsync(RibbonProtocol.PermissionRequest, JsonCodec.Serialize(prompt), cancellationToken).ConfigureAwait(false);
-        var decision = JsonCodec.Deserialize<PermissionDecision>(response.Payload);
-        return decision.Cancelled
-            ? new { outcome = new { outcome = "cancelled" } }
-            : new { outcome = new { outcome = "selected", optionId = decision.OptionId } };
+        using var pendingPermission = session.PendingPermissions.Register(cancellationToken);
+        try
+        {
+            var response = await session.Client.RequestAsync(
+                RibbonProtocol.PermissionRequest,
+                JsonCodec.Serialize(prompt),
+                pendingPermission.Token).ConfigureAwait(false);
+            var decision = JsonCodec.Deserialize<PermissionDecision>(response.Payload);
+            return decision.Cancelled
+                ? new { outcome = new { outcome = "cancelled" } }
+                : new { outcome = new { outcome = "selected", optionId = decision.OptionId } };
+        }
+        catch (OperationCanceledException) when (pendingPermission.CancelledByClient)
+        {
+            return new { outcome = new { outcome = "cancelled" } };
+        }
     }
 
     private string CreateSessionDirectory(SessionStartRequest request, HostRegistration host)
@@ -263,7 +275,108 @@ internal sealed class AgentSessionManager : IAsyncDisposable
         return string.Concat((value ?? string.Empty).Select(character => char.IsLetterOrDigit(character) || character == '-' ? character : '_'));
     }
 
-    private sealed record SessionContext(string SessionId, string HostId, PipePeer Client, AgentRuntime Runtime);
+    internal static bool IsAuthenticationRequired(AcpRpcException exception, int authenticationMethodCount)
+    {
+        return exception.Code == -32000 && authenticationMethodCount > 0;
+    }
+
+    private sealed class SessionContext
+    {
+        public SessionContext(string sessionId, string hostId, PipePeer client, AgentRuntime runtime)
+        {
+            SessionId = sessionId;
+            HostId = hostId;
+            Client = client;
+            Runtime = runtime;
+        }
+
+        public string SessionId { get; }
+        public string HostId { get; }
+        public PipePeer Client { get; }
+        public AgentRuntime Runtime { get; }
+        public PendingPermissionRegistry PendingPermissions { get; } = new();
+    }
+}
+
+internal sealed class PendingPermissionRegistry
+{
+    private readonly ConcurrentDictionary<long, Registration> _registrations = new();
+    private long _nextId;
+
+    public Registration Register(CancellationToken cancellationToken)
+    {
+        var id = Interlocked.Increment(ref _nextId);
+        var registration = new Registration(this, id, cancellationToken);
+        if (!_registrations.TryAdd(id, registration))
+        {
+            registration.Dispose();
+            throw new InvalidOperationException("Unable to track an ACP permission request.");
+        }
+        return registration;
+    }
+
+    public void CancelAll()
+    {
+        foreach (var registration in _registrations.Values)
+        {
+            registration.CancelByClient();
+        }
+    }
+
+    private void Remove(long id, Registration registration)
+    {
+        _registrations.TryRemove(new KeyValuePair<long, Registration>(id, registration));
+    }
+
+    internal sealed class Registration : IDisposable
+    {
+        private readonly object _gate = new();
+        private readonly PendingPermissionRegistry _owner;
+        private readonly long _id;
+        private readonly CancellationTokenSource _cancellation;
+        private bool _disposed;
+        private bool _cancelledByClient;
+
+        public Registration(PendingPermissionRegistry owner, long id, CancellationToken cancellationToken)
+        {
+            _owner = owner;
+            _id = id;
+            _cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        }
+
+        public CancellationToken Token => _cancellation.Token;
+        public bool CancelledByClient
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _cancelledByClient;
+                }
+            }
+        }
+
+        public void CancelByClient()
+        {
+            lock (_gate)
+            {
+                if (_disposed) return;
+                _cancelledByClient = true;
+                _cancellation.Cancel();
+            }
+        }
+
+        public void Dispose()
+        {
+            lock (_gate)
+            {
+                if (_disposed) return;
+                _disposed = true;
+                _owner.Remove(_id, this);
+                _cancellation.Dispose();
+            }
+        }
+    }
 }
 
 internal sealed class AgentRuntime : IAsyncDisposable

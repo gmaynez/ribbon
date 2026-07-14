@@ -204,8 +204,16 @@ internal sealed class AcpProcessConnection : IAsyncDisposable
         }
         catch (Exception exception)
         {
-            await WriteAsync(new { jsonrpc = "2.0", id = JsonValue(id), error = new { code = -32603, message = exception.Message } }, cancellationToken).ConfigureAwait(false);
+            var error = MapError(exception);
+            await WriteAsync(new { jsonrpc = "2.0", id = JsonValue(id), error = new { code = error.Code, message = error.Message } }, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    internal static AcpErrorResponse MapError(Exception exception)
+    {
+        return exception is AcpRpcException rpcException
+            ? new AcpErrorResponse(rpcException.Code, rpcException.Message)
+            : new AcpErrorResponse(-32603, exception.Message);
     }
 
     private async Task WriteAsync(object message, CancellationToken cancellationToken)
@@ -259,3 +267,5 @@ internal sealed class AcpProcessConnection : IAsyncDisposable
         return document.RootElement.Clone();
     }
 }
+
+internal readonly record struct AcpErrorResponse(int Code, string Message);
