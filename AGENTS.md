@@ -16,8 +16,6 @@ Keep that separation intact. Application-specific COM automation belongs in the 
 - `Deck` — PowerPoint VSTO host and PowerPoint tools.
 - `docs/architecture.md` — protocol, process, security, and extension details.
 
-The legacy Grid chat/MCP source directories remain for reference but are intentionally excluded from `Grid.csproj`. Do not reconnect them to the build unless the architecture is deliberately being reconsidered.
-
 The active Excel tool surface is split deliberately:
 
 - `Grid/Office/GridOfficeHost.cs` — MCP-visible definitions and invocation routing.

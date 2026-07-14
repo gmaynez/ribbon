@@ -99,5 +99,3 @@ Agent state is stored under `%LOCALAPPDATA%\Ribbon`:
 ## Scope and next work
 
 This is a working architectural slice, not yet a production installer. The next useful increments are richer Word and PowerPoint tool catalogs, conditional formatting and sorting for Excel, a selectable authentication-method dialog, signed release packaging with a .NET runtime prerequisite or self-contained broker, reconnect/session recovery, and automated integration tests with a fake ACP agent.
-
-The old Grid chat/MCP implementation remains in the source tree for reference but is no longer compiled or referenced by the add-in.

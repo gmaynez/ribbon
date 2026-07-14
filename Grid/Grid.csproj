@@ -34,8 +34,6 @@
     <BootstrapperComponentsLocation>HomeSite</BootstrapperComponentsLocation>
     <ResolveComReferenceSilent>true</ResolveComReferenceSilent>
     <MSBuildWarningsAsMessages>$(MSBuildWarningsAsMessages);MSB3178</MSBuildWarningsAsMessages>
-    <NuGetPackageImportStamp>
-    </NuGetPackageImportStamp>
   </PropertyGroup>
   <ItemGroup>
     <BootstrapperPackage Include="Microsoft.VSTORuntime.4.0">
@@ -212,7 +210,6 @@
       <AutoGen>True</AutoGen>
       <DependentUpon>Resources.resx</DependentUpon>
     </Compile>
-    <None Include="app.config" />
     <None Include="Grid_TemporaryKey.pfx" />
     <None Include="Properties\Settings.settings">
       <Generator>SettingsSingleFileGenerator</Generator>
@@ -275,11 +272,4 @@
       </FlavorProperties>
     </VisualStudio>
   </ProjectExtensions>
-  <Import Project="..\packages\System.ValueTuple.4.6.1\build\net471\System.ValueTuple.targets" Condition="Exists('..\packages\System.ValueTuple.4.6.1\build\net471\System.ValueTuple.targets')" />
-  <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
-    <PropertyGroup>
-      <ErrorText>This project references NuGet package(s) that are missing on this computer. Use NuGet Package Restore to download them.  For more information, see http://go.microsoft.com/fwlink/?LinkID=322105. The missing file is {0}.</ErrorText>
-    </PropertyGroup>
-    <Error Condition="!Exists('..\packages\System.ValueTuple.4.6.1\build\net471\System.ValueTuple.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\System.ValueTuple.4.6.1\build\net471\System.ValueTuple.targets'))" />
-  </Target>
 </Project>
