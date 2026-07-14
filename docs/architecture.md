@@ -33,7 +33,7 @@ The broker pipe uses a small versioned envelope from `Ribbon.Contracts`. Payload
 | --- | --- | --- |
 | Office add-ins | .NET Framework 4.8 in Office | Task pane and COM operations |
 | Shared VSTO library | .NET Framework 4.8 in Office | Broker lifecycle, pipe RPC, permissions, UI |
-| Ribbon Broker | .NET 8 out of process | Registry, installation, ACP sessions, MCP routing |
+| Ribbon Broker | .NET 10 out of process | Registry, installation, ACP sessions, MCP routing |
 | ACP agent | Agent-defined process | Reasoning and tool selection |
 | MCP proxy | Additional Ribbon Broker process | stdio MCP endpoint supplied to one ACP session |
 

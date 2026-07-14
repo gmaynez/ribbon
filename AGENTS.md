@@ -9,7 +9,7 @@ Keep that separation intact. Application-specific COM automation belongs in the 
 ## Project map
 
 - `Ribbon.Contracts` — versioned JSON pipe contracts; targets `netstandard2.0` so both runtimes can consume it.
-- `Ribbon.Broker` — .NET 8 broker, ACP client, Registry installer, session manager, and stdio MCP proxy.
+- `Ribbon.Broker` — .NET 10 broker, ACP client, Registry installer, session manager, and stdio MCP proxy.
 - `Ribbon.Vsto` — .NET Framework 4.8 pipe client, shared task pane, agent manager, and permission UI.
 - `Grid` — Excel VSTO host and Excel tools.
 - `Quill` — Word VSTO host and Word tools.
@@ -31,7 +31,7 @@ The legacy Grid chat/MCP source directories remain for reference but are intenti
 ## Coding guidance
 
 - `Ribbon.Vsto` and the Office projects must remain compatible with .NET Framework 4.8 and C# 9.
-- `Ribbon.Broker` targets .NET 8 for current process, JSON, pipe, and archive APIs.
+- `Ribbon.Broker` targets .NET 10 with C# 14 for current process, JSON, pipe, and archive APIs.
 - Avoid adding a JSON package to the VSTO projects. `Ribbon.Vsto.JsonCodec` deliberately uses the framework serializer, while the broker uses `System.Text.Json`.
 - Return structured, JSON-safe values from Office tools. Convert COM-specific values before crossing the pipe.
 - Catch exceptions at process and protocol boundaries and return useful errors. Do not silently swallow tool failures.

@@ -34,7 +34,7 @@ flowchart LR
     B --> R["ACP Registry"]
 ```
 
-The add-ins contain only UI and application-specific COM operations. The .NET 8 broker owns everything process-oriented, including agent installation and ACP/MCP transport. See [docs/architecture.md](docs/architecture.md) for protocol and security details.
+The add-ins contain only UI and application-specific COM operations. The .NET 10 broker owns everything process-oriented, including agent installation and ACP/MCP transport. See [docs/architecture.md](docs/architecture.md) for protocol and security details.
 
 ## Build
 
@@ -43,7 +43,7 @@ Requirements:
 - Windows with desktop Excel, Word, and PowerPoint
 - Visual Studio with **Office/SharePoint development** tools
 - .NET Framework 4.8 targeting pack
-- .NET 8 runtime for the broker
+- .NET 10 runtime for the broker
 
 Build the complete solution from a Visual Studio developer shell:
 
@@ -69,7 +69,7 @@ Agent state is stored under `%LOCALAPPDATA%\Ribbon`:
 
 ## Project layout
 
-- `Ribbon.Contracts` — versioned broker wire contracts shared by .NET Framework and .NET 8
+- `Ribbon.Contracts` — versioned broker wire contracts shared by .NET Framework and .NET 10
 - `Ribbon.Broker` — ACP client, registry installer, session manager, Office MCP proxy, and host router
 - `Ribbon.Vsto` — reusable named-pipe client, agent manager, permission UI, and task pane
 - `Grid` — Excel host adapter

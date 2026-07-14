@@ -40,7 +40,7 @@ namespace Ribbon.Vsto
             {
                 foreach (var configuration in new[] { "Debug", "Release" })
                 {
-                    var candidate = Path.Combine(cursor.FullName, "Ribbon.Broker", "bin", configuration, "net8.0-windows", "Ribbon.Broker.exe");
+                    var candidate = Path.Combine(cursor.FullName, "Ribbon.Broker", "bin", configuration, "net10.0-windows", "Ribbon.Broker.exe");
                     if (File.Exists(candidate))
                     {
                         return candidate;
