@@ -1,0 +1,37 @@
+# Visual Studio and user state
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+artifacts/
+
+# NuGet restore output
+packages/
+*.nupkg
+*.snupkg
+
+# VSTO signing keys and generated deployment output
+*.pfx
+*.cer
+*.publish.xml
+publish/
+app.publish/
+
+# Runtime state and logs
+*.log
+.ribbon/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp

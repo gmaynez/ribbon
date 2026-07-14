@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="Ribbon.Contracts/Ribbon.Contracts.csproj" />
+  <Project Path="Ribbon.Broker/Ribbon.Broker.csproj" />
+  <Project Path="Ribbon.Vsto/Ribbon.Vsto.csproj" />
+  <Project Path="Deck/Deck.csproj" Id="9ce1ac52-adc6-4dec-b889-299d5dee7123" />
+  <Project Path="Grid/Grid.csproj" Id="2492d56d-db80-494d-a876-1a135d752b33" />
+  <Project Path="Quill/Quill.csproj" Id="4f12a765-7bab-4fdc-b033-cbfa3999ddf6" />
+</Solution>

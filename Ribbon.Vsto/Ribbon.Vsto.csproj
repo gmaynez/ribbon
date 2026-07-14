@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>Ribbon.Vsto</AssemblyName>
+    <RootNamespace>Ribbon.Vsto</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Ribbon.Contracts\Ribbon.Contracts.csproj" />
+    <Reference Include="System.Web.Extensions" />
+  </ItemGroup>
+</Project>
