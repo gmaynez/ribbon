@@ -10,6 +10,7 @@ The result is one agent experience across Office without forcing Excel to automa
 - Install Windows binary and `npx` agent distributions. Ribbon provisions a private Node.js LTS runtime when needed and verifies the official Node archive checksum.
 - Launch ACP v1 agents, authenticate them, create sessions, stream updates, cancel turns, and answer permission requests.
 - Give every agent a local stdio MCP server named `ribbon-office`.
+- Compose MCP guidance from the tools currently connected to that agent session, with the launching Office host's workflow first.
 - Route MCP calls over a current-user named pipe to every connected Office host.
 - Use the same **Ribbon Agents** task pane in Excel, Word, and PowerPoint.
 - Match the Windows/Office light or dark appearance with a shared DPI-aware visual system.

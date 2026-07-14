@@ -21,9 +21,10 @@ This keeps failure and deployment boundaries aligned with Office while preservin
 4. The broker launches the agent and performs ACP `initialize` over stdio.
 5. The broker creates an isolated session directory and calls ACP `session/new`.
 6. `session/new` includes `Ribbon.Broker.exe --mcp-stdio --host-id <id>` as a stdio MCP server.
-7. The MCP proxy asks the primary broker for the live tool catalog. The preferred Office host is listed first, followed by other connected hosts.
-8. MCP calls are routed to the VSTO process that owns the selected tool and executed on that Office application's UI thread.
-9. ACP session updates stream back through the broker to the task pane.
+7. During MCP `initialize`, the proxy asks the primary broker for the live tool catalog. It composes an inspect–act–verify playbook from only those capabilities, with the preferred Office host first.
+8. A later MCP `tools/list` refreshes the live catalog; every listed tool retains its host routing identity, description, strict schema, and mutation annotations.
+9. MCP calls are routed to the VSTO process that owns the selected tool and executed on that Office application's UI thread.
+10. ACP session updates stream back through the broker to the task pane.
 
 The broker pipe uses a small versioned envelope from `Ribbon.Contracts`. Payloads are JSON strings so both .NET Framework 4.8 and modern .NET can share the protocol without sharing a JSON runtime.
 

@@ -10,6 +10,7 @@ Keep that separation intact. Application-specific COM automation belongs in the 
 
 - `Ribbon.Contracts` — versioned JSON pipe contracts; targets `netstandard2.0` so both runtimes can consume it.
 - `Ribbon.Broker` — .NET 10 broker, ACP client, Registry installer, session manager, and stdio MCP proxy.
+- `Ribbon.Broker.Tests` — .NET 10 broker tests, including capability-aware MCP instruction composition.
 - `Ribbon.Vsto` — .NET Framework 4.8 pipe client, shared task pane, agent manager, and permission UI.
 - `Grid` — Excel VSTO host and Excel tools.
 - `Quill` — Word VSTO host and Word tools.
@@ -60,6 +61,7 @@ The active PowerPoint tool surface follows the same split:
 13. Treat `word_format_range` as a patch. Keep structured insertions such as headings, lists, tables, comments, and page breaks as task-oriented tools rather than raw COM access.
 14. PowerPoint slide numbers are one-based snapshots of the current presentation order. Refresh them after slide lifecycle changes and use the returned `shape_name` for later shape mutations.
 15. Treat `powerpoint_format_shape` as a patch. Express geometry in points, keep chart and table payloads bounded to 10,000 data cells, and accept only existing absolute local paths for image insertion.
+16. Compose MCP server instructions from the live tool catalog. Mention only available tool names, preserve preferred-host order, keep a safe no-tools fallback, and test single-host, mixed-host, partial, and unknown-host catalogs.
 
 ## Coding guidance
 
@@ -93,6 +95,7 @@ The broker and shared libraries can also be checked independently:
 
 ```powershell
 dotnet build Ribbon.Broker\Ribbon.Broker.csproj --no-restore
+dotnet test Ribbon.Broker.Tests\Ribbon.Broker.Tests.csproj --no-restore
 dotnet build Ribbon.Vsto\Ribbon.Vsto.csproj --no-restore
 ```
 

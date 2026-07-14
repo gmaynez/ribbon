@@ -60,7 +60,7 @@ internal sealed class OfficeMcpStdioProxy
             {
                 object result = method switch
                 {
-                    "initialize" => Initialize(parameters),
+                    "initialize" => await InitializeAsync(broker, parameters, cancellationToken).ConfigureAwait(false),
                     "ping" => new { },
                     "tools/list" => await ListToolsAsync(broker, cancellationToken).ConfigureAwait(false),
                     "tools/call" => await CallToolAsync(broker, parameters, cancellationToken).ConfigureAwait(false),
@@ -82,7 +82,28 @@ internal sealed class OfficeMcpStdioProxy
         return 0;
     }
 
-    private static object Initialize(JsonElement parameters)
+    private async Task<object> InitializeAsync(PipePeer broker, JsonElement parameters, CancellationToken cancellationToken)
+    {
+        IReadOnlyCollection<OfficeToolDefinition> definitions;
+        try
+        {
+            definitions = await RefreshToolsAsync(broker, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _tools.Clear();
+            definitions = [];
+            _log.Error("Office MCP initialization could not discover connected tool capabilities. Initialization will continue without Office-specific guidance.", exception);
+        }
+
+        return Initialize(parameters, OfficeMcpInstructions.Build(definitions));
+    }
+
+    private static object Initialize(JsonElement parameters, string instructions)
     {
         var requestedVersion = parameters.ValueKind == JsonValueKind.Object
             && parameters.TryGetProperty("protocolVersion", out var version)
@@ -93,20 +114,13 @@ internal sealed class OfficeMcpStdioProxy
             protocolVersion = requestedVersion ?? "2025-06-18",
             capabilities = new { tools = new { listChanged = false } },
             serverInfo = new { name = "ribbon-office", title = "Ribbon for Microsoft Office", version = RibbonProtocol.ProductVersion },
-            instructions = "Use these tools to inspect and modify the user's currently connected Microsoft Office applications. Prefer precise reads before writes and clearly summarize user-visible changes. In Excel, use excel_write_formulas for formulas, treat excel_format_range as a patch that preserves unspecified styling, and create charts or tables only after inspecting their source range. In Word, inspect context and headings before structural edits, treat word_format_range as a patch, and refresh character positions after mutations because later text moves as the document changes. In PowerPoint, inspect the slide outline and target slide before editing, use returned shape names for later mutations, treat powerpoint_format_shape as a patch, and refresh slide numbers after moving, duplicating, or deleting slides."
+            instructions
         };
     }
 
     private async Task<object> ListToolsAsync(PipePeer broker, CancellationToken cancellationToken)
     {
-        var response = await broker.RequestAsync(RibbonProtocol.ListTools, JsonCodec.Serialize(new HostIdRequest { HostId = _preferredHostId }), cancellationToken).ConfigureAwait(false);
-        var definitions = JsonCodec.Deserialize<List<OfficeToolDefinition>>(response.Payload);
-        _tools.Clear();
-        foreach (var definition in definitions)
-        {
-            _tools[definition.Name] = definition;
-        }
-
+        var definitions = await RefreshToolsAsync(broker, cancellationToken).ConfigureAwait(false);
         var tools = new JsonArray();
         foreach (var definition in definitions)
         {
@@ -123,6 +137,18 @@ internal sealed class OfficeMcpStdioProxy
             });
         }
         return new JsonObject { ["tools"] = tools };
+    }
+
+    private async Task<List<OfficeToolDefinition>> RefreshToolsAsync(PipePeer broker, CancellationToken cancellationToken)
+    {
+        var response = await broker.RequestAsync(RibbonProtocol.ListTools, JsonCodec.Serialize(new HostIdRequest { HostId = _preferredHostId }), cancellationToken).ConfigureAwait(false);
+        var definitions = JsonCodec.Deserialize<List<OfficeToolDefinition>>(response.Payload);
+        _tools.Clear();
+        foreach (var definition in definitions)
+        {
+            _tools[definition.Name] = definition;
+        }
+        return definitions;
     }
 
     private async Task<object> CallToolAsync(PipePeer broker, JsonElement parameters, CancellationToken cancellationToken)

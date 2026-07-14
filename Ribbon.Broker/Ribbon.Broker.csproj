@@ -11,4 +11,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Ribbon.Contracts\Ribbon.Contracts.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Ribbon.Broker.Tests" />
+  </ItemGroup>
 </Project>
