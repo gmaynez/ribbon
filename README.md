@@ -12,6 +12,7 @@ The result is one agent experience across Office without forcing Excel to automa
 - Give every agent a local stdio MCP server named `ribbon-office`.
 - Route MCP calls over a current-user named pipe to every connected Office host.
 - Use the same **Ribbon Agents** task pane in Excel, Word, and PowerPoint.
+- Match the Windows/Office light or dark appearance with a shared DPI-aware visual system.
 
 Included Office tools:
 

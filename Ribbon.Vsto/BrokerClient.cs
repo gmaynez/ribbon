@@ -85,10 +85,10 @@ namespace Ribbon.Vsto
             _closed.Cancel();
             try { _pipe?.Dispose(); } catch { }
             try { _readLoop?.GetAwaiter().GetResult(); } catch { }
-            _reader?.Dispose();
-            _writer?.Dispose();
-            _writeGate.Dispose();
-            _closed.Dispose();
+            try { _reader?.Dispose(); } catch { }
+            try { _writer?.Dispose(); } catch { }
+            try { _writeGate.Dispose(); } catch { }
+            try { _closed.Dispose(); } catch { }
         }
 
         private async Task<RpcEnvelope> RequestAsync(string method, string payload, CancellationToken cancellationToken)
