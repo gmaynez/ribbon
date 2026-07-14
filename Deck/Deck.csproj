@@ -184,6 +184,7 @@
     can be found.
   -->
   <ItemGroup>
+    <Compile Include="DeckRibbon.cs" />
     <Compile Include="Office\*.cs" />
     <Compile Include="Properties\AssemblyInfo.cs">
       <SubType>Code</SubType>

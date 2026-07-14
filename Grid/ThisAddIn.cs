@@ -4,6 +4,7 @@ using System.Windows.Forms;
 using Microsoft.Office.Tools;
 using Grid.Office;
 using Ribbon.Vsto;
+using OfficeCore = global::Microsoft.Office.Core;
 
 namespace Grid
 {
@@ -12,6 +13,11 @@ namespace Grid
         private VstoHostRuntime _runtime;
         private RibbonSidebarControl _sidebarControl;
         private CustomTaskPane _sidebarPane;
+
+        protected override OfficeCore.IRibbonExtensibility CreateRibbonExtensibilityObject()
+        {
+            return new GridRibbon(this);
+        }
 
         private void ThisAddIn_Startup(object sender, System.EventArgs e)
         {
@@ -24,6 +30,11 @@ namespace Grid
             _sidebarPane = this.CustomTaskPanes.Add(_sidebarControl, RibbonProductIdentity.GetTaskPaneTitle("Excel"));
             _sidebarPane.Width = 420;
             _sidebarPane.Visible = true;
+        }
+
+        internal void ShowSidebar()
+        {
+            if (_sidebarPane != null) _sidebarPane.Visible = true;
         }
 
         private void ThisAddIn_Shutdown(object sender, System.EventArgs e)

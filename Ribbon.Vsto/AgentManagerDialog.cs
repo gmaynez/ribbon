@@ -19,23 +19,25 @@ namespace Ribbon.Vsto
         private readonly RibbonButton _close;
         private readonly Label _status = new Label();
         private readonly RibbonStatusDot _statusDot = new RibbonStatusDot();
+        private readonly Label _detailTitle = new Label();
         private readonly Label _description = new Label();
         private readonly Label _metadata = new Label();
         private readonly List<AgentSummary> _allAgents = new List<AgentSummary>();
         private readonly ImageList _rowHeight = new ImageList();
+        private readonly ToolTip _toolTip = new ToolTip { InitialDelay = 450, ReshowDelay = 100, AutoPopDelay = 8000 };
 
         public AgentManagerDialog(VstoHostRuntime runtime, RibbonPalette palette = null)
         {
             _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
             _palette = palette ?? RibbonPalette.Detect();
-            _toggle = new RibbonButton(_palette, RibbonButtonKind.Primary) { Text = "Install", Glyph = RibbonGlyph.Download, Width = 102, Enabled = false };
-            _refresh = new RibbonButton(_palette, RibbonButtonKind.Secondary) { Text = "Refresh", Glyph = RibbonGlyph.Refresh, Width = 100 };
-            _close = new RibbonButton(_palette, RibbonButtonKind.Ghost) { Text = "Close", Width = 84, DialogResult = DialogResult.OK };
+            _toggle = new RibbonButton(_palette, RibbonButtonKind.Primary) { Text = "Install", Glyph = RibbonGlyph.Download, Width = 112, Enabled = false };
+            _refresh = new RibbonButton(_palette, RibbonButtonKind.Secondary) { Text = "Refresh", Glyph = RibbonGlyph.Refresh, Width = 104 };
+            _close = new RibbonButton(_palette, RibbonButtonKind.Ghost) { Text = "Close", Width = 84, DialogResult = DialogResult.Cancel };
 
             Text = "Ribbon · ACP Agent Registry";
             StartPosition = FormStartPosition.CenterParent;
-            MinimumSize = new Size(760, 500);
-            Size = new Size(920, 610);
+            MinimumSize = new Size(780, 520);
+            Size = new Size(940, 640);
             AutoScaleMode = AutoScaleMode.Dpi;
             BackColor = _palette.Background;
             ForeColor = _palette.Text;
@@ -45,7 +47,11 @@ namespace Ribbon.Vsto
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) _rowHeight.Dispose();
+            if (disposing)
+            {
+                _rowHeight.Dispose();
+                _toolTip.Dispose();
+            }
             base.Dispose(disposing);
         }
 
@@ -58,6 +64,7 @@ namespace Ribbon.Vsto
         protected override async void OnShown(EventArgs e)
         {
             base.OnShown(e);
+            FitColumns();
             await ReloadAsync();
         }
 
@@ -71,31 +78,32 @@ namespace Ribbon.Vsto
                 Padding = new Padding(18, 16, 18, 14),
                 BackColor = _palette.Background
             };
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
-            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 78));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
             root.Controls.Add(BuildHeader(), 0, 0);
             root.Controls.Add(BuildToolbar(), 0, 1);
             root.Controls.Add(BuildList(), 0, 2);
             root.Controls.Add(BuildDetails(), 0, 3);
             root.Controls.Add(BuildFooter(), 0, 4);
             Controls.Add(root);
-            AcceptButton = _close;
+            CancelButton = _close;
         }
 
         private Control BuildHeader()
         {
-            var header = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, BackColor = _palette.Background };
+            var header = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = _palette.Background };
             header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 48));
             header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            var mark = new RibbonBrandMark(_palette) { Margin = new Padding(2, 3, 10, 0) };
+            header.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            var mark = new RibbonBrandMark(_palette) { Margin = new Padding(2, 4, 10, 0) };
             var titles = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1, BackColor = _palette.Background };
-            titles.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
-            titles.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
-            titles.Controls.Add(LabelFor("Agent Registry", 15f, FontStyle.Bold, _palette.Text, _palette.Background), 0, 0);
-            titles.Controls.Add(LabelFor("Discover and manage ACP agents available to every Office application", 8.75f, FontStyle.Regular, _palette.MutedText, _palette.Background), 0, 1);
+            titles.RowStyles.Add(new RowStyle(SizeType.Absolute, 29));
+            titles.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+            titles.Controls.Add(LabelFor("Agent Registry", 14f, FontStyle.Bold, _palette.Text, _palette.Background), 0, 0);
+            titles.Controls.Add(LabelFor("Discover and manage ACP agents for every Ribbon workspace", 9f, FontStyle.Regular, _palette.MutedText, _palette.Background), 0, 1);
             header.Controls.Add(mark, 0, 0);
             header.Controls.Add(titles, 1, 0);
             return header;
@@ -103,24 +111,21 @@ namespace Ribbon.Vsto
 
         private Control BuildToolbar()
         {
-            var toolbar = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, BackColor = _palette.Background, Margin = new Padding(0, 0, 0, 8) };
+            var toolbar = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, BackColor = _palette.Background, Margin = new Padding(0, 0, 0, 8) };
             toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
 
-            var searchSurface = new RibbonSurface(_palette) { Dock = DockStyle.Fill, Padding = new Padding(10, 7, 10, 5), Margin = new Padding(0, 3, 12, 3), CornerRadius = 7 };
+            var searchSurface = new RibbonSurface(_palette) { Dock = DockStyle.Fill, Padding = new Padding(12, 7, 12, 5), Margin = new Padding(0, 3, 0, 3), CornerRadius = 7 };
             _search.Dock = DockStyle.Fill;
             _search.BorderStyle = BorderStyle.None;
             _search.BackColor = _palette.Surface;
             _search.ForeColor = _palette.Text;
             _search.Font = new Font(Font.FontFamily, 9.25f, FontStyle.Regular);
             _search.TextChanged += (sender, args) => ApplyFilter();
+            _search.KeyDown += SearchOnKeyDown;
+            _search.AccessibleName = "Search ACP agents";
             RibbonCue.Set(_search, "Search by agent name, id, or description");
             searchSurface.Controls.Add(_search);
             toolbar.Controls.Add(searchSurface, 0, 0);
-
-            var count = LabelFor("PUBLIC ACP REGISTRY", 7.5f, FontStyle.Bold, _palette.Accent, _palette.Background);
-            count.TextAlign = ContentAlignment.MiddleRight;
-            toolbar.Controls.Add(count, 1, 0);
             return toolbar;
         }
 
@@ -141,27 +146,36 @@ namespace Ribbon.Vsto
             _rowHeight.ColorDepth = ColorDepth.Depth8Bit;
             _list.SmallImageList = _rowHeight;
             _list.HeaderStyle = ColumnHeaderStyle.Nonclickable;
-            _list.Columns.Add("Agent", 190);
-            _list.Columns.Add("Version", 86);
-            _list.Columns.Add("Distribution", 96);
-            _list.Columns.Add("Status", 122);
-            _list.Columns.Add("Description", 330);
+            _list.Columns.Add("Agent", 180);
+            _list.Columns.Add("Version", 80);
+            _list.Columns.Add("Distribution", 90);
+            _list.Columns.Add("Status", 110);
+            _list.Columns.Add("Description", 320);
             _list.DrawColumnHeader += DrawColumnHeader;
             _list.DrawItem += (sender, args) => { };
             _list.DrawSubItem += DrawSubItem;
             _list.SelectedIndexChanged += (sender, args) => UpdateSelection();
             _list.DoubleClick += async (sender, args) => { if (_toggle.Enabled) await ToggleAsync(); };
-            _list.Resize += (sender, args) => FitDescriptionColumn();
+            _list.Resize += (sender, args) => FitColumns();
+            _list.AccessibleName = "Compatible ACP agents";
             surface.Controls.Add(_list);
             return surface;
         }
 
         private Control BuildDetails()
         {
-            var surface = new RibbonSurface(_palette) { Dock = DockStyle.Fill, Padding = new Padding(12, 9, 12, 8), Margin = new Padding(0, 0, 0, 8), CornerRadius = 8 };
-            var details = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, BackColor = _palette.Surface };
-            details.RowStyles.Add(new RowStyle(SizeType.Percent, 62));
-            details.RowStyles.Add(new RowStyle(SizeType.Percent, 38));
+            var surface = new RibbonSurface(_palette) { Dock = DockStyle.Fill, Padding = new Padding(12, 8, 12, 7), Margin = new Padding(0, 0, 0, 8), CornerRadius = 8 };
+            var details = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, BackColor = _palette.Surface };
+            details.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+            details.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            details.RowStyles.Add(new RowStyle(SizeType.Absolute, 20));
+            _detailTitle.Dock = DockStyle.Fill;
+            _detailTitle.AutoEllipsis = true;
+            _detailTitle.Text = "Agent details";
+            _detailTitle.ForeColor = _palette.Text;
+            _detailTitle.BackColor = _palette.Surface;
+            _detailTitle.Font = new Font(Font.FontFamily, 9.25f, FontStyle.Bold);
+            _detailTitle.TextAlign = ContentAlignment.MiddleLeft;
             _description.Dock = DockStyle.Fill;
             _description.AutoEllipsis = true;
             _description.Text = "Select an agent to see its details.";
@@ -174,20 +188,19 @@ namespace Ribbon.Vsto
             _metadata.BackColor = _palette.Surface;
             _metadata.Font = new Font(Font.FontFamily, 8f, FontStyle.Regular);
             _metadata.TextAlign = ContentAlignment.MiddleLeft;
-            details.Controls.Add(_description, 0, 0);
-            details.Controls.Add(_metadata, 0, 1);
+            details.Controls.Add(_detailTitle, 0, 0);
+            details.Controls.Add(_description, 0, 1);
+            details.Controls.Add(_metadata, 0, 2);
             surface.Controls.Add(details);
             return surface;
         }
 
         private Control BuildFooter()
         {
-            var footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 5, BackColor = _palette.Background };
+            var footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, BackColor = _palette.Background };
             footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 18));
             footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 108));
-            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
-            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             _statusDot.Anchor = AnchorStyles.Left;
             _statusDot.DotColor = _palette.MutedText;
             _status.Dock = DockStyle.Fill;
@@ -196,18 +209,35 @@ namespace Ribbon.Vsto
             _status.ForeColor = _palette.MutedText;
             _status.Font = new Font(Font.FontFamily, 8.5f, FontStyle.Regular);
             _refresh.Dock = DockStyle.Fill;
-            _refresh.Margin = new Padding(4, 6, 4, 5);
+            _refresh.Margin = new Padding(0, 6, 4, 5);
             _refresh.Click += async (sender, args) => await ReloadAsync();
             _toggle.Dock = DockStyle.Fill;
             _toggle.Margin = new Padding(4, 6, 4, 5);
             _toggle.Click += async (sender, args) => await ToggleAsync();
             _close.Dock = DockStyle.Fill;
             _close.Margin = new Padding(4, 6, 0, 5);
+            _refresh.AccessibleName = "Refresh ACP Registry";
+            _toggle.AccessibleName = "Install or uninstall selected agent";
+            _close.AccessibleName = "Close Agent Registry";
+            _toolTip.SetToolTip(_refresh, "Download the latest compatible agents from the ACP Registry.");
+            _toolTip.SetToolTip(_close, "Close the Agent Registry.");
+            var actions = new FlowLayoutPanel
+            {
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                WrapContents = false,
+                FlowDirection = FlowDirection.LeftToRight,
+                BackColor = _palette.Background,
+                Margin = new Padding(0),
+                Padding = new Padding(0),
+                Anchor = AnchorStyles.Right
+            };
+            actions.Controls.Add(_refresh);
+            actions.Controls.Add(_toggle);
+            actions.Controls.Add(_close);
             footer.Controls.Add(_statusDot, 0, 0);
             footer.Controls.Add(_status, 1, 0);
-            footer.Controls.Add(_refresh, 2, 0);
-            footer.Controls.Add(_toggle, 3, 0);
-            footer.Controls.Add(_close, 4, 0);
+            footer.Controls.Add(actions, 2, 0);
             return footer;
         }
 
@@ -289,10 +319,14 @@ namespace Ribbon.Vsto
             _toggle.Text = agent != null && agent.Installed ? "Uninstall" : "Install";
             _toggle.Glyph = agent != null && agent.Installed ? RibbonGlyph.Remove : RibbonGlyph.Download;
             _toggle.Kind = agent != null && agent.Installed ? RibbonButtonKind.Danger : RibbonButtonKind.Primary;
+            _detailTitle.Text = agent?.Name ?? "Agent details";
             _description.Text = agent?.Description ?? "Select an agent to see its details.";
             _metadata.Text = agent == null
                 ? string.Empty
                 : string.Join("   ·   ", new[] { agent.Id, "v" + agent.Version, agent.DistributionType, agent.License }.Where(value => !string.IsNullOrWhiteSpace(value)));
+            _toolTip.SetToolTip(_toggle, agent == null
+                ? "Select an agent first."
+                : agent.Installed ? "Uninstall " + agent.Name + "." : "Install " + agent.Name + ".");
         }
 
         private AgentSummary SelectedAgent()
@@ -353,7 +387,10 @@ namespace Ribbon.Vsto
         private void DrawSubItem(object sender, DrawListViewSubItemEventArgs e)
         {
             var selected = e.Item.Selected;
-            var backgroundColor = selected ? RibbonDrawing.Blend(_palette.Accent, _palette.Surface, _palette.IsDark ? 0.72f : 0.86f) : _palette.Surface;
+            var rowColor = e.Item.Index % 2 == 0
+                ? _palette.Surface
+                : RibbonDrawing.Blend(_palette.SurfaceRaised, _palette.Surface, _palette.IsDark ? 0.58f : 0.72f);
+            var backgroundColor = selected ? RibbonDrawing.Blend(_palette.Accent, _palette.Surface, _palette.IsDark ? 0.72f : 0.86f) : rowColor;
             using (var background = new SolidBrush(backgroundColor)) e.Graphics.FillRectangle(background, e.Bounds);
             var textColor = _palette.Text;
             if (e.ColumnIndex == 3)
@@ -370,11 +407,28 @@ namespace Ribbon.Vsto
             }
         }
 
-        private void FitDescriptionColumn()
+        private void FitColumns()
         {
             if (_list.Columns.Count < 5) return;
-            var fixedWidth = _list.Columns[0].Width + _list.Columns[1].Width + _list.Columns[2].Width + _list.Columns[3].Width;
-            _list.Columns[4].Width = Math.Max(180, _list.ClientSize.Width - fixedWidth - 4);
+            var available = _list.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 3;
+            if (available < 300) return;
+            _list.Columns[0].Width = available * 23 / 100;
+            _list.Columns[1].Width = available * 10 / 100;
+            _list.Columns[2].Width = available * 12 / 100;
+            _list.Columns[3].Width = available * 15 / 100;
+            _list.Columns[4].Width = available
+                - _list.Columns[0].Width
+                - _list.Columns[1].Width
+                - _list.Columns[2].Width
+                - _list.Columns[3].Width;
+        }
+
+        private void SearchOnKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode != Keys.Escape || _search.TextLength == 0) return;
+            _search.Clear();
+            e.SuppressKeyPress = true;
+            e.Handled = true;
         }
 
         private static bool Contains(string value, string query)

@@ -4,6 +4,7 @@ using System.Windows.Forms;
 using Microsoft.Office.Tools;
 using Deck.Office;
 using Ribbon.Vsto;
+using OfficeCore = global::Microsoft.Office.Core;
 
 namespace Deck
 {
@@ -13,6 +14,11 @@ namespace Deck
         private RibbonSidebarControl _sidebarControl;
         private CustomTaskPane _sidebarPane;
 
+        protected override OfficeCore.IRibbonExtensibility CreateRibbonExtensibilityObject()
+        {
+            return new DeckRibbon(this);
+        }
+
         private void ThisAddIn_Startup(object sender, System.EventArgs e)
         {
             var context = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
@@ -21,6 +27,11 @@ namespace Deck
             _sidebarPane = this.CustomTaskPanes.Add(_sidebarControl, RibbonProductIdentity.GetTaskPaneTitle("PowerPoint"));
             _sidebarPane.Width = 420;
             _sidebarPane.Visible = true;
+        }
+
+        internal void ShowSidebar()
+        {
+            if (_sidebarPane != null) _sidebarPane.Visible = true;
         }
 
         private void ThisAddIn_Shutdown(object sender, System.EventArgs e)

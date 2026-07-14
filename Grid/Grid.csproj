@@ -192,6 +192,7 @@
     can be found.
   -->
   <ItemGroup>
+    <Compile Include="GridRibbon.cs" />
     <Compile Include="Office\ComUtilities.cs" />
     <Compile Include="Office\ExcelAutomationService.cs" />
     <Compile Include="Office\ExcelToolModels.cs" />

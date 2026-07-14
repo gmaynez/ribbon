@@ -14,6 +14,7 @@ The result is one agent experience across Office without forcing Excel to automa
 - Compose MCP guidance from the tools currently connected to that agent session, with the launching Office host's workflow first.
 - Route MCP calls over a current-user named pipe to every connected Office host.
 - Use a shared host-branded task pane: **Ribbon Grid for Excel**, **Ribbon Quill for Word**, and **Ribbon Deck for PowerPoint**.
+- Reopen a closed task pane from the **Ribbon** group on the Office **Home** tab.
 - Match the Windows/Office light or dark appearance with a shared DPI-aware visual system.
 
 Included Office tools:
