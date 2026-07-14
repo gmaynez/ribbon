@@ -19,7 +19,7 @@ Included Office tools:
 | Host | Tools |
 | --- | --- |
 | Excel | context, list sheets, read/write values and formulas, clear/format ranges, add sheets, create tables and charts |
-| Word | context, read document, replace selection, append text |
+| Word | context, bounded reads, headings, text edits, find/replace, formatting, lists, tables, comments, page breaks |
 | PowerPoint | context, list slides, read slide, add slide |
 
 ### Excel agent tools
@@ -40,6 +40,29 @@ The Excel adapter exposes task-oriented tools rather than a thin mirror of the C
 | `excel_create_chart` | Create and position an embedded chart from an inspected source range. |
 
 Range reads default to 20,000 cells and are hard-limited to 100,000 cells per call. Writes have the same 100,000-cell hard limit. This keeps agent context bounded and encourages targeted inspection.
+
+### Word agent tools
+
+Word operations use document character positions so an agent can inspect structure, make a targeted change, and verify the result:
+
+| Tool | Purpose |
+| --- | --- |
+| `word_get_context` | Inspect the active document, selection, story, and document statistics. |
+| `word_read_document` | Read a bounded slice of the main document story. |
+| `word_list_headings` | Discover headings with outline levels and character positions. |
+| `word_replace_selection` | Replace the current selection, including deletion with empty text. |
+| `word_append_text` | Append text before the document's final paragraph mark. |
+| `word_insert_text` | Insert text around the selection or at document boundaries. |
+| `word_replace_range` | Replace or delete an exact span using inspected character positions. |
+| `word_find_replace` | Perform bounded literal replacement with matching options. |
+| `word_format_range` | Patch styles, fonts, paragraph layout, and highlighting. |
+| `word_insert_heading` | Insert a paragraph using a built-in Heading 1–9 style. |
+| `word_insert_list` | Insert structured bulleted or numbered items. |
+| `word_insert_table` | Insert and populate a styled table from a rectangular matrix. |
+| `word_add_comment` | Attach a review comment to the selection or explicit positions. |
+| `word_insert_page_break` | Insert a page break at a deliberate document position. |
+
+Document reads are limited to 200,000 characters per call. Character positions are snapshots: agents should refresh context or headings after mutations before making another position-based change.
 
 ## Architecture
 
@@ -98,4 +121,4 @@ Agent state is stored under `%LOCALAPPDATA%\Ribbon`:
 
 ## Scope and next work
 
-This is a working architectural slice, not yet a production installer. The next useful increments are richer Word and PowerPoint tool catalogs, conditional formatting and sorting for Excel, a selectable authentication-method dialog, signed release packaging with a .NET runtime prerequisite or self-contained broker, reconnect/session recovery, and automated integration tests with a fake ACP agent.
+This is a working architectural slice, not yet a production installer. The next useful increments are richer PowerPoint tools, tracked-changes and image/section support for Word, conditional formatting and sorting for Excel, a selectable authentication-method dialog, signed release packaging with a .NET runtime prerequisite or self-contained broker, reconnect/session recovery, and automated integration tests with a fake ACP agent.

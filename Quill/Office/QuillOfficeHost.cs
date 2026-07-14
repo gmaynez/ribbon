@@ -12,13 +12,13 @@ namespace Quill.Office
     internal sealed class QuillOfficeHost : IOfficeHost
     {
         private readonly Word.Application _application;
-        private readonly Ribbon.Vsto.OfficeDispatcher _dispatcher;
+        private readonly WordAutomationService _automation;
         private readonly string _hostId = "word-" + Guid.NewGuid().ToString("N");
 
         public QuillOfficeHost(Word.Application application, SynchronizationContext context)
         {
             _application = application ?? throw new ArgumentNullException(nameof(application));
-            _dispatcher = new Ribbon.Vsto.OfficeDispatcher(context);
+            _automation = new WordAutomationService(application, new Ribbon.Vsto.OfficeDispatcher(context));
         }
 
         public HostRegistration Registration
@@ -43,10 +43,20 @@ namespace Quill.Office
         {
             return new List<OfficeToolDefinition>
             {
-                Tool("word_get_context", "Get the active Word document and current selection.", "{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}", false),
-                Tool("word_read_document", "Read text from the active Word document.", "{\"type\":\"object\",\"properties\":{\"max_characters\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":200000}},\"additionalProperties\":false}", false),
-                Tool("word_replace_selection", "Replace the current Word selection with text.", "{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"additionalProperties\":false}", true),
-                Tool("word_append_text", "Append text at the end of the active Word document.", "{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"additionalProperties\":false}", true)
+                Tool("word_get_context", "Inspect the active Word document, current selection, story, and document statistics. Call this first when the user's target is ambiguous.", WordToolSchemas.Empty, false),
+                Tool("word_read_document", "Read a bounded slice of the main document story using stable Word character positions.", WordToolSchemas.ReadDocument, false),
+                Tool("word_list_headings", "List heading text, outline levels, and character positions to understand document structure before editing.", WordToolSchemas.ListHeadings, false),
+                Tool("word_replace_selection", "Replace the current Word selection with text. Newlines create Word paragraphs.", WordToolSchemas.Text, true),
+                Tool("word_append_text", "Append text immediately before the final paragraph mark in the active document.", WordToolSchemas.Text, true),
+                Tool("word_insert_text", "Insert text before or after the selection, or at the start or end of the document, without replacing existing text.", WordToolSchemas.InsertText, true),
+                Tool("word_replace_range", "Replace or delete an exact character range previously obtained from a Word read or structure tool.", WordToolSchemas.ReplaceRange, true),
+                Tool("word_find_replace", "Find and replace literal text in the main document story with bounded replacement count and optional case or whole-word matching.", WordToolSchemas.FindReplace, true),
+                Tool("word_format_range", "Apply only the specified style, font, paragraph, or highlight properties to explicit character positions or the current selection.", WordToolSchemas.FormatRange, true),
+                Tool("word_insert_heading", "Insert one paragraph and apply a built-in Heading 1 through Heading 9 style.", WordToolSchemas.InsertHeading, true),
+                Tool("word_insert_list", "Insert a bulleted or numbered list from structured items.", WordToolSchemas.InsertList, true),
+                Tool("word_insert_table", "Insert a populated Word table from a rectangular value matrix with optional header styling and AutoFit behavior.", WordToolSchemas.InsertTable, true),
+                Tool("word_add_comment", "Add a review comment to explicit character positions or the current selection.", WordToolSchemas.AddComment, true),
+                Tool("word_insert_page_break", "Insert a page break at the selection, document start, or document end.", WordToolSchemas.InsertPageBreak, true)
             };
         }
 
@@ -54,7 +64,54 @@ namespace Quill.Office
         {
             try
             {
-                var result = await _dispatcher.RunAsync(() => InvokeOnOfficeThread(invocation), cancellationToken).ConfigureAwait(false);
+                object result;
+                switch (invocation.ToolName)
+                {
+                    case "word_get_context":
+                        result = await _automation.GetContextAsync(cancellationToken).ConfigureAwait(false);
+                        break;
+                    case "word_read_document":
+                        result = await _automation.ReadDocumentAsync(JsonCodec.Deserialize<ReadDocumentRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false);
+                        break;
+                    case "word_list_headings":
+                        result = await _automation.ListHeadingsAsync(JsonCodec.Deserialize<ListHeadingsRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false);
+                        break;
+                    case "word_replace_selection":
+                        result = await _automation.ReplaceSelectionAsync(JsonCodec.Deserialize<TextRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false);
+                        break;
+                    case "word_append_text":
+                        result = await _automation.AppendTextAsync(JsonCodec.Deserialize<TextRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false);
+                        break;
+                    case "word_insert_text":
+                        result = await _automation.InsertTextAsync(JsonCodec.Deserialize<InsertTextRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false);
+                        break;
+                    case "word_replace_range":
+                        result = await _automation.ReplaceRangeAsync(JsonCodec.Deserialize<ReplaceRangeRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false);
+                        break;
+                    case "word_find_replace":
+                        result = await _automation.FindReplaceAsync(JsonCodec.Deserialize<FindReplaceRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false);
+                        break;
+                    case "word_format_range":
+                        result = await _automation.FormatRangeAsync(JsonCodec.Deserialize<FormatWordRangeRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false);
+                        break;
+                    case "word_insert_heading":
+                        result = await _automation.InsertHeadingAsync(JsonCodec.Deserialize<InsertHeadingRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false);
+                        break;
+                    case "word_insert_list":
+                        result = await _automation.InsertListAsync(JsonCodec.Deserialize<InsertListRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false);
+                        break;
+                    case "word_insert_table":
+                        result = await _automation.InsertTableAsync(JsonCodec.Deserialize<InsertTableRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false);
+                        break;
+                    case "word_add_comment":
+                        result = await _automation.AddCommentAsync(JsonCodec.Deserialize<AddCommentRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false);
+                        break;
+                    case "word_insert_page_break":
+                        result = await _automation.InsertPageBreakAsync(JsonCodec.Deserialize<InsertPageBreakRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false);
+                        break;
+                    default:
+                        throw new InvalidOperationException("Unknown Word tool '" + invocation.ToolName + "'.");
+                }
                 return new OfficeToolResult { Success = true, ContentJson = JsonCodec.Serialize(result) };
             }
             catch (Exception exception)
@@ -63,52 +120,9 @@ namespace Quill.Office
             }
         }
 
-        private object InvokeOnOfficeThread(OfficeToolInvocation invocation)
-        {
-            var document = _application.ActiveDocument ?? throw new InvalidOperationException("Word does not have an active document.");
-            switch (invocation.ToolName)
-            {
-                case "word_get_context":
-                    var selection = _application.Selection;
-                    return new Dictionary<string, object>
-                    {
-                        ["document"] = document.Name,
-                        ["path"] = document.FullName,
-                        ["selection_start"] = selection.Start,
-                        ["selection_end"] = selection.End,
-                        ["selection_text"] = selection.Text
-                    };
-                case "word_read_document":
-                    var read = JsonCodec.Deserialize<ReadRequest>(invocation.ArgumentsJson);
-                    var maximum = read.max_characters <= 0 ? 50000 : Math.Min(read.max_characters, 200000);
-                    var text = document.Content.Text ?? string.Empty;
-                    var truncated = text.Length > maximum;
-                    if (truncated) text = text.Substring(0, maximum);
-                    return new Dictionary<string, object> { ["document"] = document.Name, ["text"] = text, ["truncated"] = truncated, ["character_count"] = document.Content.End };
-                case "word_replace_selection":
-                    var replace = JsonCodec.Deserialize<TextRequest>(invocation.ArgumentsJson);
-                    if (replace.text == null) throw new ArgumentException("Parameter 'text' is required.");
-                    var current = _application.Selection;
-                    current.Text = replace.text;
-                    return new Dictionary<string, object> { ["document"] = document.Name, ["inserted_characters"] = replace.text.Length };
-                case "word_append_text":
-                    var append = JsonCodec.Deserialize<TextRequest>(invocation.ArgumentsJson);
-                    if (append.text == null) throw new ArgumentException("Parameter 'text' is required.");
-                    var range = document.Content;
-                    range.Collapse(Word.WdCollapseDirection.wdCollapseEnd);
-                    range.InsertAfter(append.text);
-                    return new Dictionary<string, object> { ["document"] = document.Name, ["appended_characters"] = append.text.Length };
-                default:
-                    throw new InvalidOperationException("Unknown Word tool '" + invocation.ToolName + "'.");
-            }
-        }
-
         private static OfficeToolDefinition Tool(string name, string description, string schema, bool destructive)
         {
             return new OfficeToolDefinition { Name = name, Description = description, InputSchemaJson = schema, Destructive = destructive, HostKind = "Word" };
         }
-
-        private sealed class ReadRequest { public int max_characters { get; set; } }
-        private sealed class TextRequest { public string text { get; set; } }
     }
 }

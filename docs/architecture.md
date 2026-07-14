@@ -85,3 +85,14 @@ Excel tools are designed around agent tasks rather than exposing arbitrary COM d
 - Tables and charts consume an existing inspected range instead of accepting an opaque series of COM operations.
 - Mutations return the resolved address and affected dimensions so an agent can verify its work with a targeted follow-up read.
 - One read or write is limited to 100,000 cells to protect the Office UI thread and the agent context window.
+
+### Word tool design
+
+Word tools address the main document story by zero-based character positions, while selection-based operations can also act on the user's current Word story:
+
+- Reads are bounded to 200,000 characters and return the resolved start and end positions.
+- Heading discovery provides a structural index before agents edit long documents.
+- Text insertion, headings, lists, tables, comments, and page breaks are separate task-oriented operations rather than arbitrary COM dispatch.
+- `word_format_range` is patch-like: omitted style, font, paragraph, and highlight properties remain unchanged.
+- Positions are snapshots and can shift after every text mutation; agents are instructed to refresh context, headings, or document text before a later position-based change.
+- Tables are limited to 10,000 cells and 63 columns to protect Word's UI thread.

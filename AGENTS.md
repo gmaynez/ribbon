@@ -25,6 +25,15 @@ The active Excel tool surface is split deliberately:
 
 `Grid.csproj` uses explicit `Compile` items rather than SDK-style globbing. Add every new active source file to the project.
 
+The active Word tool surface follows the same split:
+
+- `Quill/Office/QuillOfficeHost.cs` — MCP-visible definitions and invocation routing.
+- `Quill/Office/WordToolSchemas.cs` — strict schemas and agent-facing parameter descriptions.
+- `Quill/Office/WordToolModels.cs` — `JavaScriptSerializer` request DTOs.
+- `Quill/Office/WordAutomationService.cs` — Office-thread validation and Word COM operations.
+
+`Quill.csproj` includes `Office/*.cs`, so new Word tool source files are compiled automatically.
+
 ## Architecture invariants
 
 1. Office COM calls stay inside the owning Office process and execute on the captured Office UI synchronization context.
@@ -38,6 +47,8 @@ The active Excel tool surface is split deliberately:
 9. Excel range operations accept one contiguous A1 range. Keep reads and writes bounded to 100,000 cells per call so Office's UI thread and the agent context remain responsive.
 10. Keep literal Excel values and formulas as separate operations. `excel_write_range` must not execute formula-like text; formulas belong in `excel_write_formulas` and must begin with `=`.
 11. Treat `excel_format_range` as a patch: omitted formatting properties preserve the workbook's current styling.
+12. Word main-story ranges use zero-based character positions and reads are bounded to 200,000 characters. Positions shift after text mutations, so agents must refresh before later position-based edits.
+13. Treat `word_format_range` as a patch. Keep structured insertions such as headings, lists, tables, comments, and page breaks as task-oriented tools rather than raw COM access.
 
 ## Coding guidance
 
@@ -83,6 +94,14 @@ For Excel tool changes:
 - Use a fresh disposable workbook in a separate hidden Excel instance for integration checks; close it without saving and never repurpose the user's open workbook as test data.
 - Cover representative values, formulas, formatting, tables or charts when touched, and read back the resulting workbook state.
 - Re-run the complete Release build after Excel integration tests.
+
+For Word tool changes:
+
+- Validate every schema as JSON with strict nested objects.
+- Exercise definitions and dispatch through `QuillOfficeHost.GetTools` and `QuillOfficeHost.InvokeAsync`.
+- Use a fresh unsaved document in a separate hidden Word instance; close it without saving and never use the user's open document as test data.
+- Read back headings and text, and inspect the real Word object model for formatting, lists, tables, comments, or breaks touched by the change.
+- Re-run the complete Release build and inspect Quill's deployment manifest.
 
 An open Office process can lock Debug output DLLs. Prefer a Release verification build while the user's Office session is open; ask before closing or terminating their application merely to unblock a build.
 
