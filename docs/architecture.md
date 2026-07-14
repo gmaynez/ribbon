@@ -15,7 +15,7 @@ This keeps failure and deployment boundaries aligned with Office while preservin
 
 ## Connection sequence
 
-1. An Office add-in starts and connects to the named pipe for its broker protocol version (`Ribbon.Broker.v2` for the current protocol).
+1. An Office add-in starts and connects to the named pipe for its broker protocol version (`Ribbon.Broker.v1` for the current protocol).
 2. It registers a unique host id and its application kind.
 3. The user installs and selects an agent in the shared task pane.
 4. The broker launches the agent and performs ACP `initialize` over stdio.

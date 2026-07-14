@@ -5,8 +5,8 @@ namespace Ribbon.Contracts
 {
     public static class RibbonProtocol
     {
-        public const int Version = 2;
-        public const string PipeName = "Ribbon.Broker.v2";
+        public const int Version = 1;
+        public const string PipeName = "Ribbon.Broker.v1";
         public static string BrokerMutexName => "Local\\Ribbon.Broker.v" + Version;
         public const string ProductVersion = "0.1.0";
 
