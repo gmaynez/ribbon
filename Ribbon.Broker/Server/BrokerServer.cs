@@ -16,6 +16,7 @@ internal sealed class BrokerServer
     private readonly AgentInstaller _installer;
     private readonly AgentSessionManager _sessions;
     private readonly ConcurrentDictionary<PipePeer, byte> _peers = new();
+    private readonly CancellationTokenSource _idleShutdown = new();
 
     public BrokerServer(BrokerPaths paths, BrokerLog log)
     {
@@ -29,10 +30,12 @@ internal sealed class BrokerServer
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
+        using var linkedShutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _idleShutdown.Token);
+        var serverToken = linkedShutdown.Token;
         _log.Info("Ribbon Broker started.");
         try
         {
-            while (!cancellationToken.IsCancellationRequested)
+            while (!serverToken.IsCancellationRequested)
             {
                 var pipe = new NamedPipeServerStream(
                     RibbonProtocol.PipeName,
@@ -42,7 +45,7 @@ internal sealed class BrokerServer
                     PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
                 try
                 {
-                    await pipe.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
+                    await pipe.WaitForConnectionAsync(serverToken).ConfigureAwait(false);
                 }
                 catch
                 {
@@ -53,10 +56,10 @@ internal sealed class BrokerServer
                 var peer = new PipePeer(pipe, _log);
                 _peers.TryAdd(peer, 0);
                 peer.Closed += OnPeerClosed;
-                peer.Start(HandleAsync, cancellationToken);
+                peer.Start(HandleAsync, serverToken);
             }
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (serverToken.IsCancellationRequested)
         {
         }
         finally
@@ -82,6 +85,7 @@ internal sealed class BrokerServer
 
             case RibbonProtocol.UnregisterHost:
                 _hosts.Remove(peer);
+                await _sessions.ReleaseClientAsync(peer).ConfigureAwait(false);
                 return RpcEnvelope.Response(envelope, "{}");
 
             case RibbonProtocol.ListTools:
@@ -148,6 +152,14 @@ internal sealed class BrokerServer
                 await _sessions.CancelAsync(JsonCodec.Deserialize<SessionCancelRequest>(envelope.Payload), cancellationToken).ConfigureAwait(false);
                 return RpcEnvelope.Response(envelope, "{}");
 
+            case RibbonProtocol.SetSessionConfigOption:
+                {
+                    var response = await _sessions.SetConfigOptionAsync(
+                        JsonCodec.Deserialize<SessionConfigOptionRequest>(envelope.Payload),
+                        cancellationToken).ConfigureAwait(false);
+                    return RpcEnvelope.Response(envelope, JsonCodec.Serialize(response));
+                }
+
             default:
                 throw new InvalidOperationException($"Unknown Ribbon broker method '{envelope.Method}'.");
         }
@@ -157,5 +169,23 @@ internal sealed class BrokerServer
     {
         _hosts.Remove(peer);
         _peers.TryRemove(peer, out _);
+        _ = ReleaseClientAsync(peer);
+        if (_hosts.Count == 0)
+        {
+            _log.Info("Last Office host disconnected; stopping Ribbon Broker.");
+            _idleShutdown.Cancel();
+        }
+    }
+
+    private async Task ReleaseClientAsync(PipePeer peer)
+    {
+        try
+        {
+            await _sessions.ReleaseClientAsync(peer).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            _log.Error("Failed to release ACP sessions for a disconnected Office client.", exception);
+        }
     }
 }

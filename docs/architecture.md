@@ -15,18 +15,19 @@ This keeps failure and deployment boundaries aligned with Office while preservin
 
 ## Connection sequence
 
-1. An Office add-in starts and connects to the `Ribbon.Broker.v1` named pipe.
+1. An Office add-in starts and connects to the named pipe for its broker protocol version (`Ribbon.Broker.v2` for the current protocol).
 2. It registers a unique host id and its application kind.
 3. The user installs and selects an agent in the shared task pane.
 4. The broker launches the agent and performs ACP `initialize` over stdio.
 5. The broker creates an isolated session directory and calls ACP `session/new`.
 6. `session/new` includes `Ribbon.Broker.exe --mcp-stdio --host-id <id>` as a stdio MCP server.
-7. During MCP `initialize`, the proxy asks the primary broker for the live tool catalog. It composes an inspect–act–verify playbook from only those capabilities, with the preferred Office host first.
-8. A later MCP `tools/list` refreshes the live catalog; every listed tool retains its host routing identity, description, strict schema, and mutation annotations.
-9. MCP calls are routed to the VSTO process that owns the selected tool and executed on that Office application's UI thread.
-10. ACP session updates stream back through the broker to the task pane.
+7. The task pane renders ACP `configOptions` with category `model` and changes them through `session/set_config_option`.
+8. During MCP `initialize`, the proxy asks the primary broker for the live tool catalog. It composes an inspect–act–verify playbook from only those capabilities, with the preferred Office host first.
+9. A later MCP `tools/list` refreshes the live catalog; every listed tool retains its host routing identity, description, strict schema, and mutation annotations.
+10. MCP calls are routed to the VSTO process that owns the selected tool and executed on that Office application's UI thread.
+11. ACP session and configuration updates stream back through the broker to the task pane.
 
-The broker pipe uses a small versioned envelope from `Ribbon.Contracts`. Payloads are JSON strings so both .NET Framework 4.8 and modern .NET can share the protocol without sharing a JSON runtime.
+The broker pipe uses a small versioned envelope from `Ribbon.Contracts`. Its pipe name is versioned as well, preventing a newly built add-in from silently attaching to an older long-lived broker that cannot provide newly required payloads. Payloads are JSON strings so both .NET Framework 4.8 and modern .NET can share the protocol without sharing a JSON runtime.
 
 ## Process and thread boundaries
 
@@ -37,6 +38,8 @@ The broker pipe uses a small versioned envelope from `Ribbon.Contracts`. Payload
 | Ribbon Broker | .NET 10 out of process | Registry, installation, ACP sessions, MCP routing |
 | ACP agent | Agent-defined process | Reasoning and tool selection |
 | MCP proxy | Additional Ribbon Broker process | stdio MCP endpoint supplied to one ACP session |
+
+One primary Ribbon Broker process is expected while at least one Office host is connected. Each live ACP session can add a second Ribbon Broker process running with `--mcp-stdio`; it is a thin stdio proxy, not another primary broker. When an Office pipe client disconnects, the broker releases that client's sessions, cancels pending permission requests, and terminates agent runtimes that no longer serve a connected session. This also closes their MCP proxy processes instead of accumulating them across Office restarts. The primary broker exits after the last registered Office host disconnects, so the next Office launch starts the current deployed broker build.
 
 COM calls never run on the broker thread. Each host adapter dispatches work back to the synchronization context captured during VSTO startup.
 

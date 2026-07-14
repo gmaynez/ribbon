@@ -9,6 +9,7 @@ The result is one agent experience across Office without forcing Excel to automa
 - Browse the public ACP Registry from the Office task pane.
 - Install Windows binary and `npx` agent distributions. Ribbon provisions a private Node.js LTS runtime when needed and verifies the official Node archive checksum.
 - Launch ACP v1 agents, authenticate them, create sessions, stream updates, cancel turns, and answer permission requests.
+- Populate an agent-driven model selector from ACP session configuration options and keep it synchronized when the agent changes configuration.
 - Give every agent a local stdio MCP server named `ribbon-office`.
 - Compose MCP guidance from the tools currently connected to that agent session, with the launching Office host's workflow first.
 - Route MCP calls over a current-user named pipe to every connected Office host.
@@ -136,4 +137,4 @@ Agent state is stored under `%LOCALAPPDATA%\Ribbon`:
 
 ## Scope and next work
 
-This is a working architectural slice, not yet a production installer. The next useful increments are richer PowerPoint tools, tracked-changes and image/section support for Word, conditional formatting and sorting for Excel, a selectable authentication-method dialog, signed release packaging with a .NET runtime prerequisite or self-contained broker, reconnect/session recovery, and automated integration tests with a fake ACP agent.
+This is a working architectural slice, not yet a production installer. The next useful increments are tracked-changes and image/section support for Word, conditional formatting and sorting for Excel, a selectable authentication-method dialog, signed release packaging with a .NET runtime prerequisite or self-contained broker, reconnect/session recovery, and automated integration tests with a fake ACP agent.

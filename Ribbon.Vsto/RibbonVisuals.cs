@@ -12,15 +12,19 @@ namespace Ribbon.Vsto
         public static bool Run(Control owner, Action action)
         {
             if (owner == null || action == null || owner.IsDisposed || owner.Disposing || !owner.IsHandleCreated) return false;
-            if (!owner.InvokeRequired)
-            {
-                action();
-                return true;
-            }
-
             try
             {
-                owner.Invoke(action);
+                if (!owner.InvokeRequired)
+                {
+                    if (owner.IsDisposed || owner.Disposing || !owner.IsHandleCreated) return false;
+                    action();
+                    return true;
+                }
+
+                owner.Invoke(new Action(() =>
+                {
+                    if (!owner.IsDisposed && !owner.Disposing && owner.IsHandleCreated) action();
+                }));
                 return true;
             }
             catch (ObjectDisposedException)
@@ -36,15 +40,18 @@ namespace Ribbon.Vsto
         public static void Post(Control owner, Action action)
         {
             if (owner == null || action == null || owner.IsDisposed || owner.Disposing || !owner.IsHandleCreated) return;
-            if (!owner.InvokeRequired)
-            {
-                action();
-                return;
-            }
-
             try
             {
-                owner.BeginInvoke(action);
+                if (!owner.InvokeRequired)
+                {
+                    if (!owner.IsDisposed && !owner.Disposing && owner.IsHandleCreated) action();
+                    return;
+                }
+
+                owner.BeginInvoke(new Action(() =>
+                {
+                    if (!owner.IsDisposed && !owner.Disposing && owner.IsHandleCreated) action();
+                }));
             }
             catch (ObjectDisposedException)
             {

@@ -16,6 +16,8 @@ internal sealed class AgentSessionManager : IAsyncDisposable
     private readonly HostRegistry _hosts;
     private readonly ConcurrentDictionary<string, AgentRuntime> _runtimes = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, SessionContext> _sessions = new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim _runtimeGate = new(1, 1);
+    private int _disposed;
 
     public AgentSessionManager(BrokerPaths paths, BrokerLog log, InstalledAgentStore store, HostRegistry hosts)
     {
@@ -34,65 +36,87 @@ internal sealed class AgentSessionManager : IAsyncDisposable
 
         var installed = await _store.FindAsync(request.AgentId, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"ACP agent '{request.AgentId}' is not installed.");
-        var runtime = _runtimes.GetOrAdd(installed.Id, _ => CreateRuntime(installed));
-        await runtime.InitializeAsync(cancellationToken).ConfigureAwait(false);
-
-        var host = _hosts.Get(request.HostId);
-        var workingDirectory = CreateSessionDirectory(request, host.Registration);
-        JsonElement result;
+        await _runtimeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            result = await runtime.Connection.RequestAsync("session/new", new
+            ThrowIfDisposed();
+            var runtime = _runtimes.GetOrAdd(installed.Id, _ => CreateRuntime(installed));
+            await runtime.InitializeAsync(cancellationToken).ConfigureAwait(false);
+
+            var host = _hosts.Get(request.HostId);
+            var workingDirectory = CreateSessionDirectory(request, host.Registration);
+            JsonElement result;
+            try
             {
-                cwd = workingDirectory,
-                mcpServers = new[]
+                result = await runtime.Connection.RequestAsync("session/new", new
                 {
-                    new
+                    cwd = workingDirectory,
+                    mcpServers = new[]
                     {
-                        name = "ribbon-office",
-                        command = Environment.ProcessPath ?? throw new InvalidOperationException("Unable to locate Ribbon.Broker.exe."),
-                        args = new[] { "--mcp-stdio", "--host-id", request.HostId },
-                        env = Array.Empty<object>()
+                        new
+                        {
+                            name = "ribbon-office",
+                            command = Environment.ProcessPath ?? throw new InvalidOperationException("Unable to locate Ribbon.Broker.exe."),
+                            args = new[] { "--mcp-stdio", "--host-id", request.HostId },
+                            env = Array.Empty<object>()
+                        }
                     }
-                }
-            }, cancellationToken).ConfigureAwait(false);
-        }
-        catch (AcpRpcException exception) when (IsAuthenticationRequired(exception, runtime.AuthenticationMethods.Count))
-        {
-            _log.Info($"Agent {installed.Id} requires authentication before creating a session: {exception.Message}");
+                }, cancellationToken).ConfigureAwait(false);
+            }
+            catch (AcpRpcException exception) when (IsAuthenticationRequired(exception, runtime.AuthenticationMethods.Count))
+            {
+                _log.Info($"Agent {installed.Id} requires authentication before creating a session: {exception.Message}");
+                return new SessionStartResponse
+                {
+                    SessionId = string.Empty,
+                    AgentName = installed.Name,
+                    AuthenticationMethods = runtime.AuthenticationMethods.ToList()
+                };
+            }
+
+            var sessionId = result.GetProperty("sessionId").GetString()
+                ?? throw new InvalidDataException("The ACP agent did not return a session id.");
+            var configOptions = AcpSessionConfig.Parse(result);
+            var sessionContext = new SessionContext(sessionId, request.HostId, client, runtime);
+            sessionContext.ReplaceConfigOptions(configOptions);
+            _sessions[sessionId] = sessionContext;
             return new SessionStartResponse
             {
-                SessionId = string.Empty,
+                SessionId = sessionId,
                 AgentName = installed.Name,
-                AuthenticationMethods = runtime.AuthenticationMethods.ToList()
+                AuthenticationMethods = runtime.AuthenticationMethods.ToList(),
+                ConfigOptions = configOptions
             };
         }
-
-        var sessionId = result.GetProperty("sessionId").GetString()
-            ?? throw new InvalidDataException("The ACP agent did not return a session id.");
-        _sessions[sessionId] = new SessionContext(sessionId, request.HostId, client, runtime);
-        return new SessionStartResponse
+        finally
         {
-            SessionId = sessionId,
-            AgentName = installed.Name,
-            AuthenticationMethods = runtime.AuthenticationMethods.ToList()
-        };
+            _runtimeGate.Release();
+        }
     }
 
     public async Task AuthenticateAsync(AgentAuthenticationRequest request, CancellationToken cancellationToken)
     {
-        if (!_runtimes.TryGetValue(request.AgentId, out var runtime))
+        await _runtimeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            var installed = await _store.FindAsync(request.AgentId, cancellationToken).ConfigureAwait(false)
-                ?? throw new InvalidOperationException($"ACP agent '{request.AgentId}' is not installed.");
-            runtime = _runtimes.GetOrAdd(installed.Id, _ => CreateRuntime(installed));
+            ThrowIfDisposed();
+            if (!_runtimes.TryGetValue(request.AgentId, out var runtime))
+            {
+                var installed = await _store.FindAsync(request.AgentId, cancellationToken).ConfigureAwait(false)
+                    ?? throw new InvalidOperationException($"ACP agent '{request.AgentId}' is not installed.");
+                runtime = _runtimes.GetOrAdd(installed.Id, _ => CreateRuntime(installed));
+            }
+            await runtime.InitializeAsync(cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(request.MethodId))
+            {
+                throw new ArgumentException("An authentication method is required.");
+            }
+            await runtime.Connection.RequestAsync("authenticate", new { methodId = request.MethodId }, cancellationToken).ConfigureAwait(false);
         }
-        await runtime.InitializeAsync(cancellationToken).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(request.MethodId))
+        finally
         {
-            throw new ArgumentException("An authentication method is required.");
+            _runtimeGate.Release();
         }
-        await runtime.Connection.RequestAsync("authenticate", new { methodId = request.MethodId }, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task PromptAsync(SessionPromptRequest request, CancellationToken cancellationToken)
@@ -125,14 +149,83 @@ internal sealed class AgentSessionManager : IAsyncDisposable
         await session.Runtime.Connection.NotifyAsync("session/cancel", new { sessionId = request.SessionId }, cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<SessionConfigOptionsResponse> SetConfigOptionAsync(SessionConfigOptionRequest request, CancellationToken cancellationToken)
+    {
+        var session = GetSession(request.SessionId);
+        AcpSessionConfig.RequireSelectValue(session.GetConfigOptions(), request.ConfigId, request.Value);
+
+        var result = await session.Runtime.Connection.RequestAsync("session/set_config_option", new
+        {
+            sessionId = request.SessionId,
+            configId = request.ConfigId,
+            value = request.Value
+        }, cancellationToken).ConfigureAwait(false);
+        var configOptions = AcpSessionConfig.Parse(result);
+        if (configOptions.Count == 0)
+        {
+            throw new InvalidDataException("The ACP agent did not return the complete session configuration state.");
+        }
+        session.ReplaceConfigOptions(configOptions);
+        return new SessionConfigOptionsResponse { ConfigOptions = configOptions };
+    }
+
     public async ValueTask DisposeAsync()
     {
-        foreach (var runtime in _runtimes.Values)
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        await _runtimeGate.WaitAsync().ConfigureAwait(false);
+        try
         {
-            await runtime.DisposeAsync().ConfigureAwait(false);
+            foreach (var session in _sessions.Values)
+            {
+                session.PendingPermissions.CancelAll();
+            }
+            _sessions.Clear();
+            foreach (var runtime in _runtimes.Values)
+            {
+                await runtime.DisposeAsync().ConfigureAwait(false);
+            }
+            _runtimes.Clear();
         }
-        _runtimes.Clear();
-        _sessions.Clear();
+        finally
+        {
+            _runtimeGate.Release();
+        }
+    }
+
+    public async Task ReleaseClientAsync(PipePeer client)
+    {
+        if (client == null || Volatile.Read(ref _disposed) != 0) return;
+
+        var releasedSessions = 0;
+        await _runtimeGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (Volatile.Read(ref _disposed) != 0) return;
+            foreach (var pair in _sessions.Where(pair => ReferenceEquals(pair.Value.Client, client)).ToArray())
+            {
+                if (_sessions.TryRemove(pair))
+                {
+                    pair.Value.PendingPermissions.CancelAll();
+                    releasedSessions++;
+                }
+            }
+
+            var activeRuntimes = _sessions.Values.Select(session => session.Runtime).ToHashSet();
+            foreach (var pair in _runtimes.ToArray())
+            {
+                if (activeRuntimes.Contains(pair.Value) || !_runtimes.TryRemove(pair)) continue;
+                await pair.Value.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            _runtimeGate.Release();
+        }
+
+        if (releasedSessions > 0)
+        {
+            _log.Info($"Released {releasedSessions} ACP session(s) for a disconnected Office client.");
+        }
     }
 
     private AgentRuntime CreateRuntime(InstalledAgentRecord installed)
@@ -167,7 +260,13 @@ internal sealed class AgentSessionManager : IAsyncDisposable
             RawJson = update.GetRawText()
         };
 
-        if ((kind == "agent_message_chunk" || kind == "agent_thought_chunk" || kind == "user_message_chunk")
+        if (kind == "config_option_update")
+        {
+            var configOptions = AcpSessionConfig.Parse(update);
+            session.ReplaceConfigOptions(configOptions);
+            message.ConfigOptions = configOptions;
+        }
+        else if ((kind == "agent_message_chunk" || kind == "agent_thought_chunk" || kind == "user_message_chunk")
             && update.TryGetProperty("content", out var content))
         {
             message.Text = ExtractContentText(content);
@@ -253,6 +352,14 @@ internal sealed class AgentSessionManager : IAsyncDisposable
         return session;
     }
 
+    private void ThrowIfDisposed()
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            throw new ObjectDisposedException(nameof(AgentSessionManager));
+        }
+    }
+
     private static Task SendUpdateAsync(SessionContext session, SessionUpdateMessage message, CancellationToken cancellationToken)
     {
         return session.Client.NotifyAsync(RibbonProtocol.SessionUpdate, JsonCodec.Serialize(message), cancellationToken);
@@ -282,6 +389,9 @@ internal sealed class AgentSessionManager : IAsyncDisposable
 
     private sealed class SessionContext
     {
+        private readonly object _configGate = new();
+        private List<SessionConfigOption> _configOptions = [];
+
         public SessionContext(string sessionId, string hostId, PipePeer client, AgentRuntime runtime)
         {
             SessionId = sessionId;
@@ -295,6 +405,22 @@ internal sealed class AgentSessionManager : IAsyncDisposable
         public PipePeer Client { get; }
         public AgentRuntime Runtime { get; }
         public PendingPermissionRegistry PendingPermissions { get; } = new();
+
+        public IReadOnlyList<SessionConfigOption> GetConfigOptions()
+        {
+            lock (_configGate)
+            {
+                return _configOptions.ToList();
+            }
+        }
+
+        public void ReplaceConfigOptions(IEnumerable<SessionConfigOption> configOptions)
+        {
+            lock (_configGate)
+            {
+                _configOptions = configOptions?.ToList() ?? [];
+            }
+        }
     }
 }
 

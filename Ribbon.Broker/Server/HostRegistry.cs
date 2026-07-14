@@ -20,6 +20,8 @@ internal sealed class HostRegistry
 {
     private readonly ConcurrentDictionary<string, HostConnection> _hosts = new(StringComparer.OrdinalIgnoreCase);
 
+    public int Count => _hosts.Count;
+
     public void Register(HostRegistration registration, PipePeer peer)
     {
         if (string.IsNullOrWhiteSpace(registration.HostId) || string.IsNullOrWhiteSpace(registration.HostKind))

@@ -16,7 +16,9 @@ internal sealed class AcpProcessConnection : IAsyncDisposable
     private readonly CancellationTokenSource _closed = new();
     private Process? _process;
     private Task? _readLoop;
+    private Task? _errorLoop;
     private long _nextId;
+    private int _disposed;
 
     public AcpProcessConnection(InstalledAgentRecord agent, string workingDirectory, BrokerLog log)
     {
@@ -30,6 +32,10 @@ internal sealed class AcpProcessConnection : IAsyncDisposable
 
     public void Start()
     {
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            throw new ObjectDisposedException(nameof(AcpProcessConnection));
+        }
         if (_process != null)
         {
             return;
@@ -57,7 +63,7 @@ internal sealed class AcpProcessConnection : IAsyncDisposable
         _process = Process.Start(startInfo)
             ?? throw new InvalidOperationException($"Unable to start ACP agent '{_agent.Name}'.");
         _readLoop = ReadLoopAsync(_closed.Token);
-        _ = PumpStandardErrorAsync(_process, _closed.Token);
+        _errorLoop = PumpStandardErrorAsync(_process, _closed.Token);
     }
 
     public async Task<JsonElement> RequestAsync(string method, object parameters, CancellationToken cancellationToken)
@@ -89,6 +95,7 @@ internal sealed class AcpProcessConnection : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         _closed.Cancel();
         if (_process != null)
         {
@@ -103,14 +110,18 @@ internal sealed class AcpProcessConnection : IAsyncDisposable
             catch
             {
             }
-            _process.Dispose();
         }
         if (_readLoop != null)
         {
             try { await _readLoop.ConfigureAwait(false); } catch { }
         }
-        _writeGate.Dispose();
-        _closed.Dispose();
+        if (_errorLoop != null)
+        {
+            try { await _errorLoop.ConfigureAwait(false); } catch { }
+        }
+        _process?.Dispose();
+        // Request continuations may still be leaving WriteAsync after the process
+        // exits. Do not dispose their gate or cancellation source during teardown.
     }
 
     private async Task ReadLoopAsync(CancellationToken cancellationToken)

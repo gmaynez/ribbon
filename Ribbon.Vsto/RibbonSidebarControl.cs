@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
 using System.Threading.Tasks;
@@ -12,6 +13,7 @@ namespace Ribbon.Vsto
         private readonly VstoHostRuntime _runtime;
         private readonly RibbonPalette _palette;
         private readonly RibbonComboBox _agents;
+        private readonly RibbonComboBox _models;
         private readonly RibbonButton _manage;
         private readonly RichTextBox _transcript;
         private readonly TextBox _prompt;
@@ -22,14 +24,24 @@ namespace Ribbon.Vsto
         private Font _transcriptRegularFont;
         private Font _transcriptBoldFont;
         private string _sessionId;
+        private string _sessionAgentId;
+        private string _sessionStartAgentId;
+        private string _modelConfigId;
+        private Task _sessionStartTask;
+        private IList<SessionConfigOption> _sessionConfigOptions = new List<SessionConfigOption>();
         private bool _loaded;
         private bool _hasConversation;
+        private bool _suppressAgentSelection;
+        private bool _suppressModelSelection;
+        private bool _modelAvailable;
+        private bool _busy;
 
         public RibbonSidebarControl(VstoHostRuntime runtime)
         {
             _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
             _palette = RibbonPalette.Detect();
             _agents = new RibbonComboBox(_palette);
+            _models = new RibbonComboBox(_palette);
             _manage = new RibbonButton(_palette, RibbonButtonKind.Secondary) { Text = "Agents", Glyph = RibbonGlyph.Agents, Width = 88 };
             _transcript = new RichTextBox();
             _prompt = new TextBox();
@@ -45,6 +57,7 @@ namespace Ribbon.Vsto
             Font = new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point);
             MinimumSize = new Size(300, 360);
             BuildLayout();
+            ShowModelPlaceholderCore("Select an agent");
             ShowWelcomeMessage();
             _runtime.SessionUpdate += RuntimeOnSessionUpdate;
         }
@@ -78,7 +91,7 @@ namespace Ribbon.Vsto
                 Padding = new Padding(12),
                 BackColor = _palette.Background
             };
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 124));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 178));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 112));
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
@@ -93,8 +106,9 @@ namespace Ribbon.Vsto
         private Control BuildHeader()
         {
             var surface = new RibbonSurface(_palette) { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 10), Padding = new Padding(12, 10, 12, 10) };
-            var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, BackColor = _palette.Surface };
+            var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, BackColor = _palette.Surface };
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
             var brandRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, BackColor = _palette.Surface };
@@ -131,7 +145,7 @@ namespace Ribbon.Vsto
             _agents.IntegralHeight = false;
             _agents.DropDownHeight = 240;
             _agents.DrawItem += DrawAgentItem;
-            _agents.SelectedIndexChanged += (sender, args) => _sessionId = null;
+            _agents.SelectedIndexChanged += async (sender, args) => await AgentSelectionChangedAsync();
             var picker = new Panel { Dock = DockStyle.Fill, BackColor = _palette.SurfaceRaised, Margin = new Padding(0) };
             _agents.Dock = DockStyle.Fill;
             var arrow = new RibbonDropArrow(_palette, _agents);
@@ -144,8 +158,33 @@ namespace Ribbon.Vsto
             _manage.Click += async (sender, args) => await ManageAgentsAsync();
             agentRow.Controls.Add(_manage, 1, 1);
 
+            var modelRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, BackColor = _palette.Surface, Margin = new Padding(0, 4, 0, 0) };
+            modelRow.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
+            modelRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            modelRow.Controls.Add(LabelFor("MODEL", 7.5f, FontStyle.Bold, _palette.MutedText), 0, 0);
+            _models.Dock = DockStyle.Fill;
+            _models.DropDownStyle = ComboBoxStyle.DropDownList;
+            _models.FlatStyle = FlatStyle.Flat;
+            _models.DisplayMember = "Name";
+            _models.BackColor = _palette.SurfaceRaised;
+            _models.ForeColor = _palette.Text;
+            _models.Font = new Font(Font.FontFamily, 9f, FontStyle.Regular);
+            _models.DrawMode = DrawMode.OwnerDrawFixed;
+            _models.ItemHeight = 24;
+            _models.IntegralHeight = false;
+            _models.DropDownHeight = 280;
+            _models.DrawItem += DrawModelItem;
+            _models.SelectedIndexChanged += async (sender, args) => await ModelSelectionChangedAsync();
+            var modelPicker = new Panel { Dock = DockStyle.Fill, BackColor = _palette.SurfaceRaised, Margin = new Padding(0) };
+            var modelArrow = new RibbonDropArrow(_palette, _models);
+            modelPicker.Controls.Add(_models);
+            modelPicker.Controls.Add(modelArrow);
+            modelArrow.BringToFront();
+            modelRow.Controls.Add(modelPicker, 0, 1);
+
             layout.Controls.Add(brandRow, 0, 0);
             layout.Controls.Add(agentRow, 0, 1);
+            layout.Controls.Add(modelRow, 0, 2);
             surface.Controls.Add(layout);
             return surface;
         }
@@ -226,6 +265,7 @@ namespace Ribbon.Vsto
             {
                 await _runtime.StartAsync();
                 var agentCount = await ReloadAgentsAsync();
+                if (agentCount > 0) await EnsureSelectedSessionAsync();
                 SetStatus(agentCount == 0 ? "Install an ACP agent to begin" : "Ready", agentCount == 0 ? _palette.MutedText : _palette.Success);
             }
             catch (Exception exception)
@@ -242,11 +282,25 @@ namespace Ribbon.Vsto
             var orderedAgents = agents.OrderBy(item => item.Name).ToList();
             RibbonUiThread.Run(this, () =>
             {
-                _agents.Items.Clear();
-                foreach (var agent in orderedAgents) _agents.Items.Add(agent);
-                if (_agents.Items.Count > 0)
+                _suppressAgentSelection = true;
+                try
                 {
-                    _agents.SelectedItem = _agents.Items.Cast<AgentSummary>().FirstOrDefault(item => item.Id == selectedId) ?? _agents.Items[0];
+                    _agents.Items.Clear();
+                    foreach (var agent in orderedAgents) _agents.Items.Add(agent);
+                    if (_agents.Items.Count > 0)
+                    {
+                        _agents.SelectedItem = _agents.Items.Cast<AgentSummary>().FirstOrDefault(item => item.Id == selectedId) ?? _agents.Items[0];
+                    }
+                    else
+                    {
+                        _sessionId = null;
+                        _sessionAgentId = null;
+                        ShowModelPlaceholder("Select an agent");
+                    }
+                }
+                finally
+                {
+                    _suppressAgentSelection = false;
                 }
             });
             return orderedAgents.Count;
@@ -256,13 +310,188 @@ namespace Ribbon.Vsto
         {
             using (var dialog = new AgentManagerDialog(_runtime, _palette)) dialog.ShowDialog(this);
             var agentCount = await ReloadAgentsAsync();
+            if (agentCount > 0) await EnsureSelectedSessionAsync();
             SetStatus(agentCount == 0 ? "Install an ACP agent to begin" : "Ready", agentCount == 0 ? _palette.MutedText : _palette.Success);
+        }
+
+        private async Task AgentSelectionChangedAsync()
+        {
+            if (_suppressAgentSelection) return;
+            _sessionId = null;
+            _sessionAgentId = null;
+            _sessionConfigOptions = new List<SessionConfigOption>();
+            ShowModelPlaceholder(GetSelectedAgent() == null ? "Select an agent" : "Loading models…");
+            try
+            {
+                await EnsureSelectedSessionAsync();
+                if (GetSelectedAgent() != null) SetStatus("Ready", _palette.Success);
+            }
+            catch (Exception exception)
+            {
+                ShowError(exception);
+            }
+        }
+
+        private Task EnsureSelectedSessionAsync()
+        {
+            var agent = GetSelectedAgent();
+            return agent == null ? Task.CompletedTask : EnsureSessionAsync(agent);
+        }
+
+        private async Task EnsureSessionAsync(AgentSummary agent)
+        {
+            if (!string.IsNullOrWhiteSpace(_sessionId) && string.Equals(_sessionAgentId, agent.Id, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+            if (_sessionStartTask != null && string.Equals(_sessionStartAgentId, agent.Id, StringComparison.OrdinalIgnoreCase))
+            {
+                await _sessionStartTask;
+                return;
+            }
+
+            var startTask = StartSessionCoreAsync(agent);
+            _sessionStartAgentId = agent.Id;
+            _sessionStartTask = startTask;
+            try
+            {
+                await startTask;
+            }
+            finally
+            {
+                if (ReferenceEquals(_sessionStartTask, startTask))
+                {
+                    _sessionStartTask = null;
+                    _sessionStartAgentId = null;
+                }
+            }
+        }
+
+        private async Task StartSessionCoreAsync(AgentSummary agent)
+        {
+            SetStatus("Starting " + agent.Name + "…", _palette.Accent);
+            var session = await _runtime.StartSessionAsync(agent.Id);
+            if (string.IsNullOrWhiteSpace(session.SessionId) && session.AuthenticationMethods != null && session.AuthenticationMethods.Count > 0)
+            {
+                var method = session.AuthenticationMethods[0];
+                SetStatus("Authenticating with " + method.Name + "…", _palette.Accent);
+                await _runtime.AuthenticateAsync(agent.Id, method.Id);
+                session = await _runtime.StartSessionAsync(agent.Id);
+            }
+            if (string.IsNullOrWhiteSpace(session.SessionId))
+            {
+                throw new InvalidOperationException("The ACP agent did not create a session.");
+            }
+
+            var selectedAgent = GetSelectedAgent();
+            if (selectedAgent != null && string.Equals(selectedAgent.Id, agent.Id, StringComparison.OrdinalIgnoreCase))
+            {
+                _sessionId = session.SessionId;
+                _sessionAgentId = agent.Id;
+                ApplyConfigOptions(session.ConfigOptions);
+            }
+        }
+
+        private async Task ModelSelectionChangedAsync()
+        {
+            if (_suppressModelSelection || !_modelAvailable || string.IsNullOrWhiteSpace(_sessionId) || string.IsNullOrWhiteSpace(_modelConfigId))
+            {
+                return;
+            }
+            SessionConfigOptionValue selected = null;
+            RibbonUiThread.Run(this, () => selected = _models.SelectedItem as SessionConfigOptionValue);
+            if (selected == null || string.IsNullOrWhiteSpace(selected.Value)) return;
+
+            SetModelEnabled(false);
+            try
+            {
+                SetStatus("Switching to " + selected.Name + "…", _palette.Accent);
+                var response = await _runtime.SetSessionConfigOptionAsync(_sessionId, _modelConfigId, selected.Value);
+                ApplyConfigOptions(response.ConfigOptions);
+                SetStatus(selected.Name, _palette.Success);
+            }
+            catch (Exception exception)
+            {
+                ApplyConfigOptions(_sessionConfigOptions);
+                ShowError(exception);
+            }
+            finally
+            {
+                SetModelEnabled(!_busy && _modelAvailable);
+            }
+        }
+
+        private void ApplyConfigOptions(IList<SessionConfigOption> configOptions)
+        {
+            RibbonUiThread.Run(this, () => ApplyConfigOptionsCore(configOptions));
+        }
+
+        private void ApplyConfigOptionsCore(IList<SessionConfigOption> configOptions)
+        {
+            var options = configOptions ?? new List<SessionConfigOption>();
+            _sessionConfigOptions = options.ToList();
+            var model = options.FirstOrDefault(option =>
+                    string.Equals(option.Type, "select", StringComparison.Ordinal)
+                    && string.Equals(option.Category, "model", StringComparison.Ordinal))
+                ?? options.FirstOrDefault(option =>
+                    string.Equals(option.Type, "select", StringComparison.Ordinal)
+                    && string.Equals(option.Id, "model", StringComparison.OrdinalIgnoreCase));
+            if (model == null || model.Options == null || model.Options.Count == 0)
+            {
+                ShowModelPlaceholder("Agent default");
+                return;
+            }
+
+            _suppressModelSelection = true;
+            try
+            {
+                _models.Items.Clear();
+                foreach (var value in model.Options) _models.Items.Add(value);
+                var current = _models.Items.Cast<SessionConfigOptionValue>()
+                    .FirstOrDefault(value => string.Equals(value.Value, model.CurrentValue, StringComparison.Ordinal));
+                if (current == null && !string.IsNullOrWhiteSpace(model.CurrentValue))
+                {
+                    current = new SessionConfigOptionValue { Value = model.CurrentValue, Name = model.CurrentValue };
+                    _models.Items.Insert(0, current);
+                }
+                _models.SelectedItem = current ?? _models.Items[0];
+                _modelConfigId = model.Id;
+                _modelAvailable = true;
+                _models.Enabled = !_busy;
+            }
+            finally
+            {
+                _suppressModelSelection = false;
+            }
+        }
+
+        private void ShowModelPlaceholder(string text)
+        {
+            RibbonUiThread.Run(this, () => ShowModelPlaceholderCore(text));
+        }
+
+        private void ShowModelPlaceholderCore(string text)
+        {
+            _suppressModelSelection = true;
+            try
+            {
+                _modelConfigId = null;
+                _modelAvailable = false;
+                _models.Items.Clear();
+                _models.Items.Add(new SessionConfigOptionValue { Value = string.Empty, Name = text });
+                _models.SelectedIndex = 0;
+                _models.Enabled = false;
+            }
+            finally
+            {
+                _suppressModelSelection = false;
+            }
         }
 
         private async Task SendAsync()
         {
             var text = _prompt.Text.Trim();
-            var agent = _agents.SelectedItem as AgentSummary;
+            var agent = GetSelectedAgent();
             if (text.Length == 0) return;
             if (agent == null)
             {
@@ -275,19 +504,8 @@ namespace Ribbon.Vsto
             _prompt.Clear();
             try
             {
-                if (string.IsNullOrWhiteSpace(_sessionId))
-                {
-                    var session = await _runtime.StartSessionAsync(agent.Id);
-                    if (string.IsNullOrWhiteSpace(session.SessionId) && session.AuthenticationMethods != null && session.AuthenticationMethods.Count > 0)
-                    {
-                        var method = session.AuthenticationMethods[0];
-                        SetStatus("Authenticating with " + method.Name + "…", _palette.Accent);
-                        await _runtime.AuthenticateAsync(agent.Id, method.Id);
-                        session = await _runtime.StartSessionAsync(agent.Id);
-                    }
-                    _sessionId = session.SessionId;
-                    if (string.IsNullOrWhiteSpace(_sessionId)) throw new InvalidOperationException("The ACP agent did not create a session.");
-                }
+                await EnsureSessionAsync(agent);
+                if (string.IsNullOrWhiteSpace(_sessionId)) throw new InvalidOperationException("The ACP agent did not create a session.");
                 await _runtime.PromptAsync(_sessionId, text);
                 SetStatus("Ready", _palette.Success);
             }
@@ -334,6 +552,10 @@ namespace Ribbon.Vsto
             {
                 SetStatus(string.IsNullOrWhiteSpace(update.ToolName) ? "Using Office tools…" : update.ToolName + " · " + update.Status, _palette.Accent);
             }
+            else if (update.UpdateKind == "config_option_update")
+            {
+                ApplyConfigOptions(update.ConfigOptions);
+            }
             else if (update.UpdateKind == "turn_complete")
             {
                 AppendTranscript(Environment.NewLine + Environment.NewLine, _palette.Text, FontStyle.Regular);
@@ -362,16 +584,43 @@ namespace Ribbon.Vsto
             if ((e.State & DrawItemState.Focus) == DrawItemState.Focus) e.DrawFocusRectangle();
         }
 
+        private void DrawModelItem(object sender, DrawItemEventArgs e)
+        {
+            if (e.Index < 0) return;
+            var selected = (e.State & DrawItemState.Selected) == DrawItemState.Selected;
+            var background = selected ? RibbonDrawing.Blend(_palette.Accent, _palette.SurfaceRaised, 0.70f) : _palette.SurfaceRaised;
+            using (var brush = new SolidBrush(background)) e.Graphics.FillRectangle(brush, e.Bounds);
+            var model = _models.Items[e.Index] as SessionConfigOptionValue;
+            TextRenderer.DrawText(e.Graphics, model?.Name ?? _models.Items[e.Index].ToString(), _models.Font,
+                Rectangle.Inflate(e.Bounds, -8, 0), _palette.Text,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+            if ((e.State & DrawItemState.Focus) == DrawItemState.Focus) e.DrawFocusRectangle();
+        }
+
         private void SetBusy(bool busy)
         {
             RibbonUiThread.Run(this, () =>
             {
+                _busy = busy;
                 _send.Enabled = !busy;
                 _cancel.Enabled = busy;
                 _agents.Enabled = !busy;
+                _models.Enabled = !busy && _modelAvailable;
                 _manage.Enabled = !busy;
                 if (busy) SetStatusCore("Agent is working…", _palette.Accent);
             });
+        }
+
+        private AgentSummary GetSelectedAgent()
+        {
+            AgentSummary selected = null;
+            RibbonUiThread.Run(this, () => selected = _agents.SelectedItem as AgentSummary);
+            return selected;
+        }
+
+        private void SetModelEnabled(bool enabled)
+        {
+            RibbonUiThread.Run(this, () => _models.Enabled = enabled);
         }
 
         private void ShowWelcomeMessage()

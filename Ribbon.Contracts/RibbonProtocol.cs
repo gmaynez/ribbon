@@ -5,8 +5,9 @@ namespace Ribbon.Contracts
 {
     public static class RibbonProtocol
     {
-        public const int Version = 1;
-        public const string PipeName = "Ribbon.Broker.v1";
+        public const int Version = 2;
+        public const string PipeName = "Ribbon.Broker.v2";
+        public static string BrokerMutexName => "Local\\Ribbon.Broker.v" + Version;
         public const string ProductVersion = "0.1.0";
 
         public const string RegisterHost = "host/register";
@@ -21,6 +22,7 @@ namespace Ribbon.Contracts
         public const string StartSession = "session/start";
         public const string PromptSession = "session/prompt";
         public const string CancelSession = "session/cancel";
+        public const string SetSessionConfigOption = "session/set_config_option";
         public const string SessionUpdate = "session/update";
         public const string PermissionRequest = "session/request_permission";
     }
@@ -173,6 +175,7 @@ namespace Ribbon.Contracts
         public string SessionId { get; set; }
         public string AgentName { get; set; }
         public IList<AgentAuthenticationMethod> AuthenticationMethods { get; set; }
+        public IList<SessionConfigOption> ConfigOptions { get; set; }
     }
 
     public sealed class SessionPromptRequest
@@ -186,6 +189,36 @@ namespace Ribbon.Contracts
         public string SessionId { get; set; }
     }
 
+    public sealed class SessionConfigOptionRequest
+    {
+        public string SessionId { get; set; }
+        public string ConfigId { get; set; }
+        public string Value { get; set; }
+    }
+
+    public sealed class SessionConfigOptionsResponse
+    {
+        public IList<SessionConfigOption> ConfigOptions { get; set; }
+    }
+
+    public sealed class SessionConfigOption
+    {
+        public string Id { get; set; }
+        public string Name { get; set; }
+        public string Description { get; set; }
+        public string Category { get; set; }
+        public string Type { get; set; }
+        public string CurrentValue { get; set; }
+        public IList<SessionConfigOptionValue> Options { get; set; }
+    }
+
+    public sealed class SessionConfigOptionValue
+    {
+        public string Value { get; set; }
+        public string Name { get; set; }
+        public string Description { get; set; }
+    }
+
     public sealed class SessionUpdateMessage
     {
         public string SessionId { get; set; }
@@ -194,6 +227,7 @@ namespace Ribbon.Contracts
         public string ToolName { get; set; }
         public string Status { get; set; }
         public string RawJson { get; set; }
+        public IList<SessionConfigOption> ConfigOptions { get; set; }
     }
 
     public sealed class PermissionPrompt

@@ -74,10 +74,9 @@ internal sealed class PipePeer : IAsyncDisposable
         {
             try { await _readLoop.ConfigureAwait(false); } catch { }
         }
-        try { _reader.Dispose(); } catch { }
-        try { _writer.Dispose(); } catch { }
-        try { _writeGate.Dispose(); } catch { }
-        try { _closed.Dispose(); } catch { }
+        // The stream owns the OS handle. Reader, writer, gate, and cancellation
+        // continuations can still be unwinding here, so disposing them creates
+        // avoidable ObjectDisposedException races during Office shutdown.
     }
 
     private async Task ReadLoopAsync(Func<PipePeer, RpcEnvelope, CancellationToken, Task<RpcEnvelope?>> handler, CancellationToken cancellationToken)

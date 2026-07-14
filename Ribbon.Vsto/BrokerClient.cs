@@ -24,6 +24,7 @@ namespace Ribbon.Vsto
         private StreamReader _reader;
         private StreamWriter _writer;
         private Task _readLoop;
+        private int _disposed;
 
         public BrokerClient(IOfficeHost host, SynchronizationContext ui)
         {
@@ -82,17 +83,24 @@ namespace Ribbon.Vsto
 
         public void Dispose()
         {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
             _closed.Cancel();
+            var ownsWriteGate = false;
+            try { ownsWriteGate = _writeGate.Wait(1000); } catch { }
             try { _pipe?.Dispose(); } catch { }
+            finally
+            {
+                if (ownsWriteGate) _writeGate.Release();
+            }
             try { _readLoop?.GetAwaiter().GetResult(); } catch { }
-            try { _reader?.Dispose(); } catch { }
-            try { _writer?.Dispose(); } catch { }
-            try { _writeGate.Dispose(); } catch { }
-            try { _closed.Dispose(); } catch { }
+            // Pending request continuations can still exit WriteAsync during Office shutdown.
+            // The pipe owns the OS handle; do not dispose wrappers or synchronization
+            // primitives out from under those continuations.
         }
 
         private async Task<RpcEnvelope> RequestAsync(string method, string payload, CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var request = RpcEnvelope.Request(method, payload);
             var completion = new TaskCompletionSource<RpcEnvelope>(TaskCreationOptions.RunContinuationsAsynchronously);
             if (!_pending.TryAdd(request.Id, completion))

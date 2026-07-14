@@ -1,6 +1,7 @@
 using Ribbon.Broker.Infrastructure;
 using Ribbon.Broker.Mcp;
 using Ribbon.Broker.Server;
+using Ribbon.Contracts;
 
 namespace Ribbon.Broker;
 
@@ -20,7 +21,7 @@ internal static class Program
                 return await new OfficeMcpStdioProxy(hostId, log).RunAsync(CancellationToken.None).ConfigureAwait(false);
             }
 
-            using var mutex = new Mutex(true, "Local\\Ribbon.Broker.v1", out var ownsMutex);
+            using var mutex = new Mutex(true, RibbonProtocol.BrokerMutexName, out var ownsMutex);
             if (!ownsMutex)
             {
                 return 0;

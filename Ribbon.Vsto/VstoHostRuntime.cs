@@ -12,12 +12,15 @@ namespace Ribbon.Vsto
         private readonly IOfficeHost _host;
         private readonly BrokerClient _client;
         private readonly CancellationTokenSource _lifetime = new CancellationTokenSource();
+        private readonly CancellationToken _lifetimeToken;
         private Task _startTask;
+        private int _disposed;
 
         public VstoHostRuntime(IOfficeHost host, SynchronizationContext ui)
         {
             _host = host ?? throw new ArgumentNullException(nameof(host));
             _client = new BrokerClient(host, ui ?? throw new ArgumentNullException(nameof(ui)));
+            _lifetimeToken = _lifetime.Token;
             _client.SessionUpdate += (sender, message) => SessionUpdate?.Invoke(this, message);
         }
 
@@ -26,31 +29,35 @@ namespace Ribbon.Vsto
 
         public Task StartAsync()
         {
-            return _startTask ?? (_startTask = _client.ConnectAsync(_lifetime.Token));
+            if (Volatile.Read(ref _disposed) != 0)
+            {
+                return Task.FromCanceled(_lifetimeToken.IsCancellationRequested ? _lifetimeToken : new CancellationToken(true));
+            }
+            return _startTask ?? (_startTask = _client.ConnectAsync(_lifetimeToken));
         }
 
         public async Task<IList<AgentSummary>> GetInstalledAgentsAsync()
         {
             await StartAsync().ConfigureAwait(false);
-            return await _client.RequestAsync<List<AgentSummary>>(RibbonProtocol.ListInstalledAgents, new { }, _lifetime.Token).ConfigureAwait(false);
+            return await _client.RequestAsync<List<AgentSummary>>(RibbonProtocol.ListInstalledAgents, new { }, _lifetimeToken).ConfigureAwait(false);
         }
 
         public async Task<IList<AgentSummary>> GetRegistryAgentsAsync()
         {
             await StartAsync().ConfigureAwait(false);
-            return await _client.RequestAsync<List<AgentSummary>>(RibbonProtocol.ListRegistryAgents, new { }, _lifetime.Token).ConfigureAwait(false);
+            return await _client.RequestAsync<List<AgentSummary>>(RibbonProtocol.ListRegistryAgents, new { }, _lifetimeToken).ConfigureAwait(false);
         }
 
         public async Task InstallAgentAsync(string agentId)
         {
             await StartAsync().ConfigureAwait(false);
-            await _client.RequestAsync(RibbonProtocol.InstallAgent, new AgentIdRequest { AgentId = agentId }, _lifetime.Token).ConfigureAwait(false);
+            await _client.RequestAsync(RibbonProtocol.InstallAgent, new AgentIdRequest { AgentId = agentId }, _lifetimeToken).ConfigureAwait(false);
         }
 
         public async Task UninstallAgentAsync(string agentId)
         {
             await StartAsync().ConfigureAwait(false);
-            await _client.RequestAsync(RibbonProtocol.UninstallAgent, new AgentIdRequest { AgentId = agentId }, _lifetime.Token).ConfigureAwait(false);
+            await _client.RequestAsync(RibbonProtocol.UninstallAgent, new AgentIdRequest { AgentId = agentId }, _lifetimeToken).ConfigureAwait(false);
         }
 
         public async Task<SessionStartResponse> StartSessionAsync(string agentId)
@@ -63,7 +70,7 @@ namespace Ribbon.Vsto
                 AgentId = agentId,
                 HostId = Registration.HostId,
                 WorkingDirectory = workingDirectory
-            }, _lifetime.Token).ConfigureAwait(false);
+            }, _lifetimeToken).ConfigureAwait(false);
         }
 
         public async Task AuthenticateAsync(string agentId, string methodId)
@@ -73,7 +80,7 @@ namespace Ribbon.Vsto
             {
                 AgentId = agentId,
                 MethodId = methodId
-            }, _lifetime.Token).ConfigureAwait(false);
+            }, _lifetimeToken).ConfigureAwait(false);
         }
 
         public async Task PromptAsync(string sessionId, string text)
@@ -82,19 +89,32 @@ namespace Ribbon.Vsto
             {
                 SessionId = sessionId,
                 Text = text
-            }, _lifetime.Token).ConfigureAwait(false);
+            }, _lifetimeToken).ConfigureAwait(false);
         }
 
         public Task CancelAsync(string sessionId)
         {
-            return _client.RequestAsync(RibbonProtocol.CancelSession, new SessionCancelRequest { SessionId = sessionId }, _lifetime.Token);
+            return _client.RequestAsync(RibbonProtocol.CancelSession, new SessionCancelRequest { SessionId = sessionId }, _lifetimeToken);
+        }
+
+        public Task<SessionConfigOptionsResponse> SetSessionConfigOptionAsync(string sessionId, string configId, string value)
+        {
+            return _client.RequestAsync<SessionConfigOptionsResponse>(RibbonProtocol.SetSessionConfigOption, new SessionConfigOptionRequest
+            {
+                SessionId = sessionId,
+                ConfigId = configId,
+                Value = value
+            }, _lifetimeToken);
         }
 
         public void Dispose()
         {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
             _lifetime.Cancel();
             _client.Dispose();
-            _lifetime.Dispose();
+            // Async task-pane continuations may still hold the token while Office tears down.
+            // Let the process reclaim the source instead of racing those continuations.
         }
+
     }
 }
