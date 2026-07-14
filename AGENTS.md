@@ -34,6 +34,15 @@ The active Word tool surface follows the same split:
 
 `Quill.csproj` includes `Office/*.cs`, so new Word tool source files are compiled automatically.
 
+The active PowerPoint tool surface follows the same split:
+
+- `Deck/Office/DeckOfficeHost.cs` — MCP-visible definitions and invocation routing.
+- `Deck/Office/PowerPointToolSchemas.cs` — strict input schemas and agent-facing parameter descriptions.
+- `Deck/Office/PowerPointToolModels.cs` — `JavaScriptSerializer` request DTOs.
+- `Deck/Office/PowerPointAutomationService.cs` — Office-thread validation and PowerPoint COM operations.
+
+`Deck.csproj` includes `Office/*.cs`, so new PowerPoint tool source files are compiled automatically.
+
 ## Architecture invariants
 
 1. Office COM calls stay inside the owning Office process and execute on the captured Office UI synchronization context.
@@ -49,6 +58,8 @@ The active Word tool surface follows the same split:
 11. Treat `excel_format_range` as a patch: omitted formatting properties preserve the workbook's current styling.
 12. Word main-story ranges use zero-based character positions and reads are bounded to 200,000 characters. Positions shift after text mutations, so agents must refresh before later position-based edits.
 13. Treat `word_format_range` as a patch. Keep structured insertions such as headings, lists, tables, comments, and page breaks as task-oriented tools rather than raw COM access.
+14. PowerPoint slide numbers are one-based snapshots of the current presentation order. Refresh them after slide lifecycle changes and use the returned `shape_name` for later shape mutations.
+15. Treat `powerpoint_format_shape` as a patch. Express geometry in points, keep chart and table payloads bounded to 10,000 data cells, and accept only existing absolute local paths for image insertion.
 
 ## Coding guidance
 
@@ -102,6 +113,14 @@ For Word tool changes:
 - Use a fresh unsaved document in a separate hidden Word instance; close it without saving and never use the user's open document as test data.
 - Read back headings and text, and inspect the real Word object model for formatting, lists, tables, comments, or breaks touched by the change.
 - Re-run the complete Release build and inspect Quill's deployment manifest.
+
+For PowerPoint tool changes:
+
+- Confirm every schema parses as JSON and keeps `additionalProperties: false`, including nested objects.
+- Exercise definitions and dispatch through `DeckOfficeHost.GetTools` and `DeckOfficeHost.InvokeAsync`, not only by calling the automation service directly.
+- Use a fresh disposable presentation in a separate PowerPoint instance for integration checks; close it without saving and never repurpose the user's open presentation as test data.
+- Cover slide lifecycle, structured shape reads, geometry and format patches, tables, native charts, images, speaker notes, backgrounds, and text replacement when touched.
+- Re-run the complete Release build and inspect Deck's deployment manifest.
 
 An open Office process can lock Debug output DLLs. Prefer a Release verification build while the user's Office session is open; ask before closing or terminating their application merely to unblock a build.
 

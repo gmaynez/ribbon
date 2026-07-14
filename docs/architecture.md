@@ -96,3 +96,11 @@ Word tools address the main document story by zero-based character positions, wh
 - `word_format_range` is patch-like: omitted style, font, paragraph, and highlight properties remain unchanged.
 - Positions are snapshots and can shift after every text mutation; agents are instructed to refresh context, headings, or document text before a later position-based change.
 - Tables are limited to 10,000 cells and 63 columns to protect Word's UI thread.
+
+### PowerPoint tool design
+
+`Deck` exposes presentation work as task-oriented `powerpoint_*` tools rather than arbitrary COM dispatch. The active surface supports bounded presentation outlines and structured slide reads; slide creation, duplication, movement, and deletion; title, text-box, diagram-shape, image, table, and native-chart authoring; patch-style shape formatting; speaker notes and solid backgrounds; and bounded literal find/replace.
+
+Slide numbers are one-based and reflect the current presentation order, so agents should refresh context after slide lifecycle changes. Shape mutations use the `shape_name` returned by slide reads and creation results. Geometry is expressed in PowerPoint points. Structured reads return shape identity, type, geometry, text, table values, and chart/table flags so an agent can verify a mutation with a targeted follow-up read.
+
+The native chart tool accepts a bounded category vector and equally sized numeric series. It assigns native PowerPoint chart series directly, avoiding an embedded-workbook activation that would launch Excel from the PowerPoint process. Image insertion accepts only an existing absolute local path and never performs network work. All authoring tools are destructive and all COM work runs through the captured PowerPoint UI synchronization context.

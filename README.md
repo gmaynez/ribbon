@@ -20,7 +20,7 @@ Included Office tools:
 | --- | --- |
 | Excel | context, list sheets, read/write values and formulas, clear/format ranges, add sheets, create tables and charts |
 | Word | context, bounded reads, headings, text edits, find/replace, formatting, lists, tables, comments, page breaks |
-| PowerPoint | context, list slides, read slide, add slide |
+| PowerPoint | context, structured slide reads, slide lifecycle, text and shapes, formatting, images, tables, charts, notes, backgrounds, find/replace |
 
 ### Excel agent tools
 
@@ -63,6 +63,20 @@ Word operations use document character positions so an agent can inspect structu
 | `word_insert_page_break` | Insert a page break at a deliberate document position. |
 
 Document reads are limited to 200,000 characters per call. Character positions are snapshots: agents should refresh context or headings after mutations before making another position-based change.
+
+### PowerPoint agent tools
+
+Deck exposes presentation tasks and structured slide state instead of arbitrary COM dispatch:
+
+| Capability | Tools |
+| --- | --- |
+| Inspect | `powerpoint_get_context`, `powerpoint_list_slides`, `powerpoint_read_slide` |
+| Slide lifecycle | `powerpoint_add_slide`, `powerpoint_duplicate_slide`, `powerpoint_move_slide`, `powerpoint_delete_slide` |
+| Text and diagrams | `powerpoint_set_slide_title`, `powerpoint_add_textbox`, `powerpoint_add_shape`, `powerpoint_format_shape`, `powerpoint_delete_shape` |
+| Data and media | `powerpoint_add_table`, `powerpoint_add_chart`, `powerpoint_add_image` |
+| Presentation details | `powerpoint_set_speaker_notes`, `powerpoint_set_slide_background`, `powerpoint_find_replace` |
+
+PowerPoint coordinates and dimensions are measured in points. Use one-based slide numbers from a recent context/list result and target shapes by the returned `shape_name`. Shape formatting is patch-based, so omitted properties are preserved. Local images must already exist at an absolute path; Deck does not perform downloads inside PowerPoint.
 
 ## Architecture
 

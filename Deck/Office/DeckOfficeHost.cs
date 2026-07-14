@@ -3,23 +3,22 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
-using Office = Microsoft.Office.Core;
-using PowerPoint = Microsoft.Office.Interop.PowerPoint;
 using Ribbon.Contracts;
 using Ribbon.Vsto;
+using PowerPoint = Microsoft.Office.Interop.PowerPoint;
 
 namespace Deck.Office
 {
     internal sealed class DeckOfficeHost : IOfficeHost
     {
         private readonly PowerPoint.Application _application;
-        private readonly Ribbon.Vsto.OfficeDispatcher _dispatcher;
+        private readonly PowerPointAutomationService _automation;
         private readonly string _hostId = "powerpoint-" + Guid.NewGuid().ToString("N");
 
         public DeckOfficeHost(PowerPoint.Application application, SynchronizationContext context)
         {
             _application = application ?? throw new ArgumentNullException(nameof(application));
-            _dispatcher = new Ribbon.Vsto.OfficeDispatcher(context);
+            _automation = new PowerPointAutomationService(application, new OfficeDispatcher(context));
         }
 
         public HostRegistration Registration
@@ -44,10 +43,24 @@ namespace Deck.Office
         {
             return new List<OfficeToolDefinition>
             {
-                Tool("powerpoint_get_context", "Get the active presentation and selected slide.", "{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}", false),
-                Tool("powerpoint_list_slides", "List slides and their visible text in the active presentation.", "{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}", false),
-                Tool("powerpoint_read_slide", "Read all text from one slide.", "{\"type\":\"object\",\"properties\":{\"slide_number\":{\"type\":\"integer\",\"minimum\":1}},\"required\":[\"slide_number\"],\"additionalProperties\":false}", false),
-                Tool("powerpoint_add_slide", "Add a title-and-content slide to the active presentation.", "{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\"},\"body\":{\"type\":\"string\"}},\"required\":[\"title\",\"body\"],\"additionalProperties\":false}", true)
+                Tool("powerpoint_get_context", "Inspect the active presentation, page size, selected slide, and selected shapes. Call this first when the user's target is ambiguous.", PowerPointToolSchemas.Empty, false),
+                Tool("powerpoint_list_slides", "List a bounded presentation outline with slide titles, layouts, shape counts, and text summaries.", PowerPointToolSchemas.ListSlides, false),
+                Tool("powerpoint_read_slide", "Read one slide as structured shapes with stable shape names, geometry, text, table metadata, and optional speaker notes.", PowerPointToolSchemas.ReadSlide, false),
+                Tool("powerpoint_add_slide", "Insert a slide using a supported PowerPoint layout and optionally populate its title and body.", PowerPointToolSchemas.AddSlide, true),
+                Tool("powerpoint_delete_slide", "Delete one slide by its current one-based slide number.", PowerPointToolSchemas.Slide, true),
+                Tool("powerpoint_duplicate_slide", "Duplicate one slide immediately after its source and return the new slide identity.", PowerPointToolSchemas.Slide, true),
+                Tool("powerpoint_move_slide", "Move one slide to a new one-based position in the active presentation.", PowerPointToolSchemas.MoveSlide, true),
+                Tool("powerpoint_set_slide_title", "Set a slide title, creating a title text box when the layout has no title placeholder.", PowerPointToolSchemas.SetSlideTitle, true),
+                Tool("powerpoint_add_textbox", "Add a positioned text box in points with optional font, alignment, fill, and line formatting.", PowerPointToolSchemas.AddTextBox, true),
+                Tool("powerpoint_add_shape", "Add a supported diagram shape in points with optional text and formatting.", PowerPointToolSchemas.AddShape, true),
+                Tool("powerpoint_format_shape", "Patch only the supplied geometry, appearance, text, text formatting, or z-order properties of a named shape.", PowerPointToolSchemas.FormatShape, true),
+                Tool("powerpoint_delete_shape", "Delete a shape identified by the shape_name returned from powerpoint_read_slide or a creation tool.", PowerPointToolSchemas.Shape, true),
+                Tool("powerpoint_add_image", "Place an existing local image on a slide. The path must be absolute; Ribbon does not download images in the Office process.", PowerPointToolSchemas.AddImage, true),
+                Tool("powerpoint_add_table", "Add a populated PowerPoint table from a rectangular value matrix with optional header, fill, and text formatting.", PowerPointToolSchemas.AddTable, true),
+                Tool("powerpoint_add_chart", "Add a native PowerPoint chart from bounded categories and numeric series with a supported chart type, title, and legend placement.", PowerPointToolSchemas.AddChart, true),
+                Tool("powerpoint_set_speaker_notes", "Replace the speaker-notes body for one slide.", PowerPointToolSchemas.SetSpeakerNotes, true),
+                Tool("powerpoint_set_slide_background", "Set a solid RGB background color on one slide and detach it from the master background.", PowerPointToolSchemas.SetSlideBackground, true),
+                Tool("powerpoint_find_replace", "Find and replace literal text across slide shapes, optionally limited to one slide and speaker notes, with a bounded replacement count.", PowerPointToolSchemas.FindReplace, true)
             };
         }
 
@@ -55,7 +68,29 @@ namespace Deck.Office
         {
             try
             {
-                var result = await _dispatcher.RunAsync(() => InvokeOnOfficeThread(invocation), cancellationToken).ConfigureAwait(false);
+                object result;
+                switch (invocation.ToolName)
+                {
+                    case "powerpoint_get_context": result = await _automation.GetContextAsync(cancellationToken).ConfigureAwait(false); break;
+                    case "powerpoint_list_slides": result = await _automation.ListSlidesAsync(JsonCodec.Deserialize<ListSlidesRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false); break;
+                    case "powerpoint_read_slide": result = await _automation.ReadSlideAsync(JsonCodec.Deserialize<ReadSlideRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false); break;
+                    case "powerpoint_add_slide": result = await _automation.AddSlideAsync(JsonCodec.Deserialize<AddSlideRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false); break;
+                    case "powerpoint_delete_slide": result = await _automation.DeleteSlideAsync(JsonCodec.Deserialize<SlideRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false); break;
+                    case "powerpoint_duplicate_slide": result = await _automation.DuplicateSlideAsync(JsonCodec.Deserialize<SlideRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false); break;
+                    case "powerpoint_move_slide": result = await _automation.MoveSlideAsync(JsonCodec.Deserialize<MoveSlideRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false); break;
+                    case "powerpoint_set_slide_title": result = await _automation.SetSlideTitleAsync(JsonCodec.Deserialize<SetSlideTitleRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false); break;
+                    case "powerpoint_add_textbox": result = await _automation.AddTextBoxAsync(JsonCodec.Deserialize<AddTextBoxRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false); break;
+                    case "powerpoint_add_shape": result = await _automation.AddShapeAsync(JsonCodec.Deserialize<AddShapeRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false); break;
+                    case "powerpoint_format_shape": result = await _automation.FormatShapeAsync(JsonCodec.Deserialize<FormatShapeRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false); break;
+                    case "powerpoint_delete_shape": result = await _automation.DeleteShapeAsync(JsonCodec.Deserialize<ShapeRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false); break;
+                    case "powerpoint_add_image": result = await _automation.AddImageAsync(JsonCodec.Deserialize<AddImageRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false); break;
+                    case "powerpoint_add_table": result = await _automation.AddTableAsync(JsonCodec.Deserialize<AddTableRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false); break;
+                    case "powerpoint_add_chart": result = await _automation.AddChartAsync(JsonCodec.Deserialize<AddChartRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false); break;
+                    case "powerpoint_set_speaker_notes": result = await _automation.SetSpeakerNotesAsync(JsonCodec.Deserialize<SetSpeakerNotesRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false); break;
+                    case "powerpoint_set_slide_background": result = await _automation.SetSlideBackgroundAsync(JsonCodec.Deserialize<SetSlideBackgroundRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false); break;
+                    case "powerpoint_find_replace": result = await _automation.FindReplaceAsync(JsonCodec.Deserialize<FindReplaceRequest>(invocation.ArgumentsJson), cancellationToken).ConfigureAwait(false); break;
+                    default: throw new InvalidOperationException("Unknown PowerPoint tool '" + invocation.ToolName + "'.");
+                }
                 return new OfficeToolResult { Success = true, ContentJson = JsonCodec.Serialize(result) };
             }
             catch (Exception exception)
@@ -64,58 +99,9 @@ namespace Deck.Office
             }
         }
 
-        private object InvokeOnOfficeThread(OfficeToolInvocation invocation)
-        {
-            var presentation = _application.ActivePresentation ?? throw new InvalidOperationException("PowerPoint does not have an active presentation.");
-            switch (invocation.ToolName)
-            {
-                case "powerpoint_get_context":
-                    var selectedSlide = 0;
-                    try { selectedSlide = _application.ActiveWindow.View.Slide.SlideIndex; } catch { }
-                    return new Dictionary<string, object> { ["presentation"] = presentation.Name, ["path"] = presentation.FullName, ["slide_count"] = presentation.Slides.Count, ["selected_slide"] = selectedSlide };
-                case "powerpoint_list_slides":
-                    var slides = new List<Dictionary<string, object>>();
-                    foreach (PowerPoint.Slide slide in presentation.Slides)
-                    {
-                        slides.Add(new Dictionary<string, object> { ["slide_number"] = slide.SlideIndex, ["text"] = ReadSlideText(slide) });
-                    }
-                    return new Dictionary<string, object> { ["presentation"] = presentation.Name, ["slides"] = slides };
-                case "powerpoint_read_slide":
-                    var read = JsonCodec.Deserialize<SlideRequest>(invocation.ArgumentsJson);
-                    if (read.slide_number < 1 || read.slide_number > presentation.Slides.Count) throw new ArgumentOutOfRangeException("slide_number");
-                    var requested = presentation.Slides[read.slide_number];
-                    return new Dictionary<string, object> { ["presentation"] = presentation.Name, ["slide_number"] = requested.SlideIndex, ["text"] = ReadSlideText(requested) };
-                case "powerpoint_add_slide":
-                    var add = JsonCodec.Deserialize<AddSlideRequest>(invocation.ArgumentsJson);
-                    var created = presentation.Slides.Add(presentation.Slides.Count + 1, PowerPoint.PpSlideLayout.ppLayoutText);
-                    created.Shapes.Title.TextFrame.TextRange.Text = add.title ?? string.Empty;
-                    if (created.Shapes.Placeholders.Count >= 2) created.Shapes.Placeholders[2].TextFrame.TextRange.Text = add.body ?? string.Empty;
-                    return new Dictionary<string, object> { ["presentation"] = presentation.Name, ["slide_number"] = created.SlideIndex };
-                default:
-                    throw new InvalidOperationException("Unknown PowerPoint tool '" + invocation.ToolName + "'.");
-            }
-        }
-
-        private static string ReadSlideText(PowerPoint.Slide slide)
-        {
-            var text = new List<string>();
-            foreach (PowerPoint.Shape shape in slide.Shapes)
-            {
-                if (shape.HasTextFrame == Microsoft.Office.Core.MsoTriState.msoTrue
-                    && shape.TextFrame.HasText == Microsoft.Office.Core.MsoTriState.msoTrue)
-                {
-                    text.Add(shape.TextFrame.TextRange.Text);
-                }
-            }
-            return string.Join("\n", text);
-        }
-
         private static OfficeToolDefinition Tool(string name, string description, string schema, bool destructive)
         {
             return new OfficeToolDefinition { Name = name, Description = description, InputSchemaJson = schema, Destructive = destructive, HostKind = "PowerPoint" };
         }
-
-        private sealed class SlideRequest { public int slide_number { get; set; } }
-        private sealed class AddSlideRequest { public string title { get; set; } public string body { get; set; } }
     }
 }
