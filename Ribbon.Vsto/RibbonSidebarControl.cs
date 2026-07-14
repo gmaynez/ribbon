@@ -21,6 +21,10 @@ namespace Ribbon.Vsto
         private readonly RibbonButton _cancel;
         private readonly Label _status;
         private readonly RibbonStatusDot _statusDot;
+        private readonly Label _promptPlaceholder;
+        private readonly ToolTip _toolTip;
+        private readonly string _hostKind;
+        private readonly string _productName;
         private Font _transcriptRegularFont;
         private Font _transcriptBoldFont;
         private string _sessionId;
@@ -40,6 +44,8 @@ namespace Ribbon.Vsto
         {
             _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
             _palette = RibbonPalette.Detect();
+            _hostKind = string.IsNullOrWhiteSpace(_runtime.Registration.HostKind) ? "Office" : _runtime.Registration.HostKind;
+            _productName = RibbonProductIdentity.GetProductName(_hostKind);
             _agents = new RibbonComboBox(_palette);
             _models = new RibbonComboBox(_palette);
             _manage = new RibbonButton(_palette, RibbonButtonKind.Secondary) { Text = "Agents", Glyph = RibbonGlyph.Agents, Width = 88 };
@@ -49,6 +55,8 @@ namespace Ribbon.Vsto
             _cancel = new RibbonButton(_palette, RibbonButtonKind.Ghost) { Text = "Stop", Glyph = RibbonGlyph.Stop, Width = 76 };
             _status = new Label();
             _statusDot = new RibbonStatusDot { DotColor = _palette.MutedText };
+            _promptPlaceholder = new Label();
+            _toolTip = new ToolTip { InitialDelay = 450, ReshowDelay = 100, AutoPopDelay = 8000 };
 
             Dock = DockStyle.Fill;
             AutoScaleMode = AutoScaleMode.Dpi;
@@ -77,6 +85,7 @@ namespace Ribbon.Vsto
                 _runtime.SessionUpdate -= RuntimeOnSessionUpdate;
                 _transcriptBoldFont?.Dispose();
                 _transcriptRegularFont?.Dispose();
+                _toolTip.Dispose();
             }
             base.Dispose(disposing);
         }
@@ -114,12 +123,15 @@ namespace Ribbon.Vsto
             var brandRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, BackColor = _palette.Surface };
             brandRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 40));
             brandRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            var mark = new RibbonBrandMark(_palette) { Margin = new Padding(0, 1, 8, 0) };
+            var mark = new RibbonBrandMark(
+                _palette,
+                RibbonProductIdentity.GetMark(_hostKind),
+                RibbonProductIdentity.GetBrandColor(_hostKind)) { Margin = new Padding(0, 1, 8, 0) };
             var titles = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1, BackColor = _palette.Surface };
             titles.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
             titles.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
-            var title = LabelFor("Ribbon", 10.5f, FontStyle.Bold, _palette.Text);
-            var subtitle = LabelFor((_runtime.Registration.HostKind ?? "Office") + " agent workspace", 8f, FontStyle.Regular, _palette.MutedText);
+            var title = LabelFor("Ribbon " + _productName, 10.5f, FontStyle.Bold, _palette.Text);
+            var subtitle = LabelFor("Agent workspace for " + _hostKind, 8f, FontStyle.Regular, _palette.MutedText);
             titles.Controls.Add(title, 0, 0);
             titles.Controls.Add(subtitle, 0, 1);
             brandRow.Controls.Add(mark, 0, 0);
@@ -130,7 +142,7 @@ namespace Ribbon.Vsto
             agentRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 94));
             agentRow.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
             agentRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            var agentLabel = LabelFor("ACTIVE AGENT", 7.5f, FontStyle.Bold, _palette.MutedText);
+            var agentLabel = LabelFor("AGENT", 7.5f, FontStyle.Bold, _palette.MutedText);
             agentRow.Controls.Add(agentLabel, 0, 0);
             agentRow.SetColumnSpan(agentLabel, 2);
             _agents.Dock = DockStyle.Fill;
@@ -146,6 +158,8 @@ namespace Ribbon.Vsto
             _agents.DropDownHeight = 240;
             _agents.DrawItem += DrawAgentItem;
             _agents.SelectedIndexChanged += async (sender, args) => await AgentSelectionChangedAsync();
+            _agents.AccessibleName = "Active ACP agent";
+            _toolTip.SetToolTip(_agents, "Choose the ACP agent for this conversation.");
             var picker = new Panel { Dock = DockStyle.Fill, BackColor = _palette.SurfaceRaised, Margin = new Padding(0) };
             _agents.Dock = DockStyle.Fill;
             var arrow = new RibbonDropArrow(_palette, _agents);
@@ -156,6 +170,8 @@ namespace Ribbon.Vsto
             _manage.Dock = DockStyle.Fill;
             _manage.Margin = new Padding(6, 0, 0, 0);
             _manage.Click += async (sender, args) => await ManageAgentsAsync();
+            _manage.AccessibleName = "Manage ACP agents";
+            _toolTip.SetToolTip(_manage, "Browse, install, update, or remove ACP agents.");
             agentRow.Controls.Add(_manage, 1, 1);
 
             var modelRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, BackColor = _palette.Surface, Margin = new Padding(0, 4, 0, 0) };
@@ -175,6 +191,8 @@ namespace Ribbon.Vsto
             _models.DropDownHeight = 280;
             _models.DrawItem += DrawModelItem;
             _models.SelectedIndexChanged += async (sender, args) => await ModelSelectionChangedAsync();
+            _models.AccessibleName = "Active model";
+            _toolTip.SetToolTip(_models, "Choose a model exposed by the active ACP agent.");
             var modelPicker = new Panel { Dock = DockStyle.Fill, BackColor = _palette.SurfaceRaised, Margin = new Padding(0) };
             var modelArrow = new RibbonDropArrow(_palette, _models);
             modelPicker.Controls.Add(_models);
@@ -191,18 +209,24 @@ namespace Ribbon.Vsto
 
         private Control BuildTranscript()
         {
-            var surface = new RibbonSurface(_palette) { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 10), Padding = new Padding(12) };
+            var surface = new RibbonSurface(_palette) { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 10), Padding = new Padding(12, 9, 12, 12) };
+            var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, BackColor = _palette.Surface };
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            layout.Controls.Add(LabelFor("CONVERSATION", 7.5f, FontStyle.Bold, _palette.MutedText), 0, 0);
             _transcript.Dock = DockStyle.Fill;
             _transcript.ReadOnly = true;
             _transcript.BorderStyle = BorderStyle.None;
             _transcript.BackColor = _palette.Surface;
             _transcript.ForeColor = _palette.Text;
-            _transcriptRegularFont = new Font(Font.FontFamily, 9.25f, FontStyle.Regular);
+            _transcriptRegularFont = new Font(Font.FontFamily, 9.5f, FontStyle.Regular);
             _transcriptBoldFont = new Font(Font.FontFamily, 9.25f, FontStyle.Bold);
             _transcript.Font = _transcriptRegularFont;
             _transcript.DetectUrls = true;
             _transcript.HideSelection = false;
-            surface.Controls.Add(_transcript);
+            _transcript.AccessibleName = "Conversation transcript";
+            layout.Controls.Add(_transcript, 0, 1);
+            surface.Controls.Add(layout);
             return surface;
         }
 
@@ -213,17 +237,35 @@ namespace Ribbon.Vsto
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 20));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
-            layout.Controls.Add(LabelFor("MESSAGE", 7.5f, FontStyle.Bold, _palette.MutedText), 0, 0);
+            layout.Controls.Add(LabelFor("PROMPT", 7.5f, FontStyle.Bold, _palette.MutedText), 0, 0);
+            var promptHost = new Panel { Dock = DockStyle.Fill, BackColor = _palette.Surface, Margin = new Padding(0) };
             _prompt.Dock = DockStyle.Fill;
             _prompt.Multiline = true;
             _prompt.BorderStyle = BorderStyle.None;
-            _prompt.ScrollBars = ScrollBars.Vertical;
+            _prompt.ScrollBars = ScrollBars.None;
+            _prompt.WordWrap = true;
+            _prompt.AcceptsReturn = true;
             _prompt.BackColor = _palette.Surface;
             _prompt.ForeColor = _palette.Text;
             _prompt.Font = new Font(Font.FontFamily, 9.5f, FontStyle.Regular);
             _prompt.KeyDown += PromptOnKeyDown;
-            layout.Controls.Add(_prompt, 0, 1);
-            var hint = LabelFor("Ctrl + Enter to send", 7.5f, FontStyle.Regular, _palette.MutedText);
+            _prompt.TextChanged += (sender, args) => UpdatePromptPlaceholder();
+            _prompt.Enter += (sender, args) => UpdatePromptPlaceholder();
+            _prompt.Leave += (sender, args) => UpdatePromptPlaceholder();
+            _prompt.AccessibleName = "Prompt for the active agent";
+            _promptPlaceholder.AutoSize = true;
+            _promptPlaceholder.Text = "Describe what you want to do in " + _hostKind + "…";
+            _promptPlaceholder.ForeColor = _palette.MutedText;
+            _promptPlaceholder.BackColor = _palette.Surface;
+            _promptPlaceholder.Font = new Font(Font.FontFamily, 9.5f, FontStyle.Regular);
+            _promptPlaceholder.Location = new Point(0, 2);
+            _promptPlaceholder.Cursor = Cursors.IBeam;
+            _promptPlaceholder.Click += (sender, args) => _prompt.Focus();
+            promptHost.Controls.Add(_prompt);
+            promptHost.Controls.Add(_promptPlaceholder);
+            _promptPlaceholder.BringToFront();
+            layout.Controls.Add(promptHost, 0, 1);
+            var hint = LabelFor("Ctrl + Enter to send  ·  Enter for a new line", 7.5f, FontStyle.Regular, _palette.MutedText);
             hint.TextAlign = ContentAlignment.BottomRight;
             layout.Controls.Add(hint, 0, 2);
             surface.Controls.Add(layout);
@@ -248,9 +290,11 @@ namespace Ribbon.Vsto
             _cancel.Margin = new Padding(2, 4, 4, 4);
             _cancel.Enabled = false;
             _cancel.Click += async (sender, args) => await CancelAsync();
+            _cancel.AccessibleName = "Stop the active agent turn";
             _send.Dock = DockStyle.Fill;
             _send.Margin = new Padding(4, 4, 0, 4);
             _send.Click += async (sender, args) => await SendAsync();
+            _send.AccessibleName = "Send prompt";
             footer.Controls.Add(_statusDot, 0, 0);
             footer.Controls.Add(_status, 1, 0);
             footer.Controls.Add(_cancel, 2, 0);
@@ -626,8 +670,12 @@ namespace Ribbon.Vsto
         private void ShowWelcomeMessage()
         {
             _transcript.Clear();
-            AppendTranscript("Ready when you are.\n", _palette.Text, FontStyle.Bold);
-            AppendTranscript("Ask your agent to inspect, explain, or update the open " + (_runtime.Registration.HostKind ?? "Office") + " document.", _palette.MutedText, FontStyle.Regular);
+            AppendTranscript("Ready to work in " + _hostKind + ".\n", _palette.Text, FontStyle.Bold);
+            AppendTranscript(
+                "Ask an agent to inspect, explain, or update the open " + RibbonProductIdentity.GetDocumentNoun(_hostKind) + ".\n\n",
+                _palette.MutedText,
+                FontStyle.Regular);
+            AppendTranscript(RibbonProductIdentity.GetExamplePrompt(_hostKind), _palette.Accent, FontStyle.Regular);
             _hasConversation = false;
         }
 
@@ -642,9 +690,15 @@ namespace Ribbon.Vsto
             {
                 AppendTranscript(Environment.NewLine + Environment.NewLine, _palette.Text, FontStyle.Regular);
             }
-            AppendTranscript("YOU\n", _palette.MutedText, FontStyle.Bold);
+            AppendTranscript("You\n", _palette.MutedText, FontStyle.Bold);
             AppendTranscript(text + Environment.NewLine + Environment.NewLine, _palette.Text, FontStyle.Regular);
-            AppendTranscript(agentName.ToUpperInvariant() + "\n", _palette.Accent, FontStyle.Bold);
+            AppendTranscript(agentName + "\n", _palette.Accent, FontStyle.Bold);
+        }
+
+        private void UpdatePromptPlaceholder()
+        {
+            RibbonUiThread.Run(this, () =>
+                _promptPlaceholder.Visible = _prompt.TextLength == 0 && !_prompt.Focused);
         }
 
         private void AppendTranscript(string text, Color color, FontStyle style)

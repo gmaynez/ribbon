@@ -13,7 +13,7 @@ The result is one agent experience across Office without forcing Excel to automa
 - Give every agent a local stdio MCP server named `ribbon-office`.
 - Compose MCP guidance from the tools currently connected to that agent session, with the launching Office host's workflow first.
 - Route MCP calls over a current-user named pipe to every connected Office host.
-- Use the same **Ribbon Agents** task pane in Excel, Word, and PowerPoint.
+- Use a shared host-branded task pane: **Ribbon Grid for Excel**, **Ribbon Quill for Word**, and **Ribbon Deck for PowerPoint**.
 - Match the Windows/Office light or dark appearance with a shared DPI-aware visual system.
 
 Included Office tools:
@@ -112,9 +112,9 @@ msbuild Ribbon.slnx /t:Build /p:Configuration=Debug /m
 
 The VSTO builds include `Ribbon.Broker.exe` and its runtime files in each deployment manifest. During repository development the shared client can also locate the broker under `Ribbon.Broker/bin`; `RIBBON_BROKER_PATH` overrides this lookup.
 
-To try Ribbon, set `Grid`, `Quill`, or `Deck` as the startup project and press **F5**. In the **Ribbon Agents** pane:
+To try Ribbon, set `Grid`, `Quill`, or `Deck` as the startup project and press **F5**. In the corresponding host-branded Ribbon task pane:
 
-1. Select **Agents…**.
+1. Select **Agents**.
 2. Install a compatible agent such as OpenCode or Codex.
 3. Select it from the agent list and enter a prompt. Use **Ctrl+Enter** to send.
 

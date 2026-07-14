@@ -18,7 +18,7 @@ namespace Deck
             var context = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
             _runtime = new VstoHostRuntime(new DeckOfficeHost(this.Application, context), context);
             _sidebarControl = new RibbonSidebarControl(_runtime);
-            _sidebarPane = this.CustomTaskPanes.Add(_sidebarControl, "Ribbon Agents");
+            _sidebarPane = this.CustomTaskPanes.Add(_sidebarControl, RibbonProductIdentity.GetTaskPaneTitle("PowerPoint"));
             _sidebarPane.Width = 420;
             _sidebarPane.Visible = true;
         }

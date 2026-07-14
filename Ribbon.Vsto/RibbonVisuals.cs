@@ -429,10 +429,19 @@ namespace Ribbon.Vsto
     {
         private readonly RibbonPalette _palette;
         private readonly Font _markFont;
+        private readonly string _mark;
+        private readonly Color _brandColor;
 
         public RibbonBrandMark(RibbonPalette palette)
+            : this(palette, "R", palette.Accent)
+        {
+        }
+
+        public RibbonBrandMark(RibbonPalette palette, string mark, Color brandColor)
         {
             _palette = palette;
+            _mark = string.IsNullOrWhiteSpace(mark) ? "R" : mark.Substring(0, 1).ToUpperInvariant();
+            _brandColor = brandColor;
             _markFont = new Font("Segoe UI", 11f, FontStyle.Bold, GraphicsUnit.Point);
             Size = new Size(32, 32);
             MinimumSize = Size;
@@ -443,11 +452,12 @@ namespace Ribbon.Vsto
         protected override void OnPaint(PaintEventArgs e)
         {
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            using (var brush = new LinearGradientBrush(ClientRectangle, _palette.Accent, _palette.AccentHover, 45f))
+            var highlight = RibbonDrawing.Blend(_brandColor, Color.White, _palette.IsDark ? 0.22f : 0.12f);
+            using (var brush = new LinearGradientBrush(ClientRectangle, _brandColor, highlight, 45f))
             {
                 e.Graphics.FillEllipse(brush, 0, 0, Width - 1, Height - 1);
             }
-            TextRenderer.DrawText(e.Graphics, "R", _markFont, ClientRectangle,
+            TextRenderer.DrawText(e.Graphics, _mark, _markFont, ClientRectangle,
                 Color.White, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
         }
 

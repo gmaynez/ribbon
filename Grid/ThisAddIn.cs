@@ -21,7 +21,7 @@ namespace Grid
             _runtime = new VstoHostRuntime(new GridOfficeHost(this.Application, synchronizationContext), synchronizationContext);
 
             _sidebarControl = new RibbonSidebarControl(_runtime);
-            _sidebarPane = this.CustomTaskPanes.Add(_sidebarControl, "Ribbon Agents");
+            _sidebarPane = this.CustomTaskPanes.Add(_sidebarControl, RibbonProductIdentity.GetTaskPaneTitle("Excel"));
             _sidebarPane.Width = 420;
             _sidebarPane.Visible = true;
         }
