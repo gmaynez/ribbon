@@ -18,6 +18,15 @@ Keep that separation intact. Application-specific COM automation belongs in the 
 
 The legacy Grid chat/MCP source directories remain for reference but are intentionally excluded from `Grid.csproj`. Do not reconnect them to the build unless the architecture is deliberately being reconsidered.
 
+The active Excel tool surface is split deliberately:
+
+- `Grid/Office/GridOfficeHost.cs` — MCP-visible definitions and invocation routing.
+- `Grid/Office/ExcelToolSchemas.cs` — strict input schemas and agent-facing parameter descriptions.
+- `Grid/Office/ExcelToolModels.cs` — JSON request DTOs compatible with `JavaScriptSerializer`.
+- `Grid/Office/ExcelAutomationService.cs` — Office-thread validation, COM operations, and JSON-safe results.
+
+`Grid.csproj` uses explicit `Compile` items rather than SDK-style globbing. Add every new active source file to the project.
+
 ## Architecture invariants
 
 1. Office COM calls stay inside the owning Office process and execute on the captured Office UI synchronization context.
@@ -27,6 +36,10 @@ The legacy Grid chat/MCP source directories remain for reference but are intenti
 5. Tool schemas must be strict JSON Schema objects. Mark every user-visible mutation as destructive.
 6. Keep the broker wire protocol backward-conscious. Increment `RibbonProtocol.Version` for an incompatible envelope or payload change.
 7. Preserve the per-user process and storage model under `%LOCALAPPDATA%\Ribbon`; never require administrator privileges for normal use.
+8. Keep Office tools task-oriented rather than exposing arbitrary COM dispatch. Tool descriptions and results should help an agent decide its next safe action.
+9. Excel range operations accept one contiguous A1 range. Keep reads and writes bounded to 100,000 cells per call so Office's UI thread and the agent context remain responsive.
+10. Keep literal Excel values and formulas as separate operations. `excel_write_range` must not execute formula-like text; formulas belong in `excel_write_formulas` and must begin with `=`.
+11. Treat `excel_format_range` as a patch: omitted formatting properties preserve the workbook's current styling.
 
 ## Coding guidance
 
@@ -34,8 +47,9 @@ The legacy Grid chat/MCP source directories remain for reference but are intenti
 - `Ribbon.Broker` targets .NET 10 with C# 14 for current process, JSON, pipe, and archive APIs.
 - Avoid adding a JSON package to the VSTO projects. `Ribbon.Vsto.JsonCodec` deliberately uses the framework serializer, while the broker uses `System.Text.Json`.
 - Return structured, JSON-safe values from Office tools. Convert COM-specific values before crossing the pipe.
+- Resolve and return the actual workbook, worksheet, and range after mutations; include affected dimensions for matrix-shaped writes so agents can verify with a targeted follow-up read.
 - Catch exceptions at process and protocol boundaries and return useful errors. Do not silently swallow tool failures.
-- Release temporary COM objects where practical, but do not aggressively final-release objects owned by Office such as the application or active selection.
+- Release temporary COM objects where practical. Use a balanced `Marshal.ReleaseComObject` for temporary RCWs; never `FinalReleaseComObject` on application-owned objects such as the application, active workbook, active worksheet, or selection.
 - Keep UI work small and non-blocking. Network, installation, and agent work belongs in the broker.
 
 ## Security expectations
@@ -63,6 +77,16 @@ dotnet build Ribbon.Vsto\Ribbon.Vsto.csproj --no-restore
 ```
 
 For changes to routing, verify at least MCP `initialize`, `tools/list`, and `tools/call` through a connected synthetic or real Office host. Do not install a third-party ACP agent merely to run a routine test unless that external state change is explicitly intended.
+
+For Excel tool changes:
+
+- Confirm every schema parses as JSON and keeps `additionalProperties: false`, including nested objects.
+- Exercise definitions and dispatch through `GridOfficeHost.GetTools` and `GridOfficeHost.InvokeAsync`, not only by calling the automation service directly.
+- Use a fresh disposable workbook in a separate hidden Excel instance for integration checks; close it without saving and never repurpose the user's open workbook as test data.
+- Cover representative values, formulas, formatting, tables or charts when touched, and read back the resulting workbook state.
+- Re-run the complete Release build after Excel integration tests.
+
+An open Office process can lock Debug output DLLs. Prefer a Release verification build while the user's Office session is open; ask before closing or terminating their application merely to unblock a build.
 
 When changing deployment content, inspect each generated VSTO application manifest and confirm that `Ribbon.Broker.exe`, `.dll`, `.deps.json`, and `.runtimeconfig.json` remain included.
 

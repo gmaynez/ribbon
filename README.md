@@ -18,9 +18,28 @@ Included Office tools:
 
 | Host | Tools |
 | --- | --- |
-| Excel | context, list sheets, read range, write range |
+| Excel | context, list sheets, read/write values and formulas, clear/format ranges, add sheets, create tables and charts |
 | Word | context, read document, replace selection, append text |
 | PowerPoint | context, list slides, read slide, add slide |
+
+### Excel agent tools
+
+The Excel adapter exposes task-oriented tools rather than a thin mirror of the COM object model:
+
+| Tool | Purpose |
+| --- | --- |
+| `excel_get_context` | Resolve the active workbook, sheet, cell, selection, and used range. |
+| `excel_list_sheets` | List worksheet names, visibility, and used ranges. |
+| `excel_read_range` | Read bounded values, formulas, and optional number formats. |
+| `excel_write_range` | Write a rectangular matrix of values. Formula-like strings remain literal. |
+| `excel_write_formulas` | Write a rectangular matrix of explicit A1-style formulas. |
+| `excel_clear_range` | Clear contents, formats, or the complete range state. |
+| `excel_format_range` | Patch fonts, fills, number formats, alignment, borders, dimensions, and AutoFit. |
+| `excel_add_sheet` | Add a validated worksheet at a deliberate workbook position. |
+| `excel_create_table` | Turn an existing data range into a named, styled Excel table. |
+| `excel_create_chart` | Create and position an embedded chart from an inspected source range. |
+
+Range reads default to 20,000 cells and are hard-limited to 100,000 cells per call. Writes have the same 100,000-cell hard limit. This keeps agent context bounded and encourages targeted inspection.
 
 ## Architecture
 
@@ -79,6 +98,6 @@ Agent state is stored under `%LOCALAPPDATA%\Ribbon`:
 
 ## Scope and next work
 
-This is a working architectural slice, not yet a production installer. The next useful increments are richer Office tool catalogs, a selectable authentication-method dialog, signed release packaging with a .NET runtime prerequisite or self-contained broker, reconnect/session recovery, and automated integration tests with a fake ACP agent.
+This is a working architectural slice, not yet a production installer. The next useful increments are richer Word and PowerPoint tool catalogs, conditional formatting and sorting for Excel, a selectable authentication-method dialog, signed release packaging with a .NET runtime prerequisite or self-contained broker, reconnect/session recovery, and automated integration tests with a fake ACP agent.
 
 The old Grid chat/MCP implementation remains in the source tree for reference but is no longer compiled or referenced by the add-in.

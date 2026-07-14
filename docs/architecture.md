@@ -74,3 +74,14 @@ Add a tool in the application-specific `IOfficeHost` implementation:
 5. Return JSON-safe structured data in `OfficeToolResult.ContentJson`.
 
 No ACP or MCP changes are required. The MCP proxy builds its tool list dynamically from connected hosts.
+
+### Excel tool design
+
+Excel tools are designed around agent tasks rather than exposing arbitrary COM dispatch:
+
+- Reads return bounded, rectangular, JSON-safe matrices and identify the resolved workbook, sheet, and A1 address.
+- Literal values and formulas use separate tools so intent is explicit and formula-like text is not executed accidentally.
+- `excel_format_range` is patch-like: omitted properties preserve the workbook's current styling.
+- Tables and charts consume an existing inspected range instead of accepting an opaque series of COM operations.
+- Mutations return the resolved address and affected dimensions so an agent can verify its work with a targeted follow-up read.
+- One read or write is limited to 100,000 cells to protect the Office UI thread and the agent context window.

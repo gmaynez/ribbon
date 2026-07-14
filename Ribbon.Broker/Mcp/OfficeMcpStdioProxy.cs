@@ -93,7 +93,7 @@ internal sealed class OfficeMcpStdioProxy
             protocolVersion = requestedVersion ?? "2025-06-18",
             capabilities = new { tools = new { listChanged = false } },
             serverInfo = new { name = "ribbon-office", title = "Ribbon for Microsoft Office", version = RibbonProtocol.ProductVersion },
-            instructions = "Use these tools to inspect and modify the user's currently connected Microsoft Office applications. Prefer precise reads before writes and clearly summarize user-visible changes."
+            instructions = "Use these tools to inspect and modify the user's currently connected Microsoft Office applications. Prefer precise reads before writes and clearly summarize user-visible changes. In Excel, use excel_write_formulas for formulas, treat excel_format_range as a patch that preserves unspecified styling, and create charts or tables only after inspecting their source range."
         };
     }
 

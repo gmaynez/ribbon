@@ -43,10 +43,16 @@ namespace Grid.Office
         {
             return new List<OfficeToolDefinition>
             {
-                Tool("excel_get_context", "Get the active Excel workbook, worksheet, and cell.", "{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}", false),
-                Tool("excel_list_sheets", "List worksheets and their used ranges in the active workbook.", "{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}", false),
-                Tool("excel_read_range", "Read values from an Excel range in the active workbook.", "{\"type\":\"object\",\"properties\":{\"sheet_name\":{\"type\":\"string\"},\"address\":{\"type\":\"string\"}},\"required\":[\"address\"],\"additionalProperties\":false}", false),
-                Tool("excel_write_range", "Write a rectangular array of values to an Excel range.", "{\"type\":\"object\",\"properties\":{\"sheet_name\":{\"type\":\"string\"},\"address\":{\"type\":\"string\"},\"values\":{\"type\":\"array\",\"items\":{\"type\":\"array\"}}},\"required\":[\"address\",\"values\"],\"additionalProperties\":false}", true)
+                Tool("excel_get_context", "Inspect the active workbook, worksheet, selected range, active cell, and used range. Call this first when the user's target is ambiguous.", ExcelToolSchemas.Empty, false),
+                Tool("excel_list_sheets", "List worksheets, visibility, and used ranges in the active workbook.", ExcelToolSchemas.Empty, false),
+                Tool("excel_read_range", "Read a bounded Excel range as JSON-safe values, with formulas by default and optional number formats. Prefer reading existing data before changing it.", ExcelToolSchemas.ReadRange, false),
+                Tool("excel_write_range", "Write a rectangular matrix of literal values beginning at an A1 address. Existing cells in the resized target are replaced.", ExcelToolSchemas.WriteRange, true),
+                Tool("excel_write_formulas", "Write a rectangular matrix of A1-style Excel formulas. Each non-null formula must begin with '='.", ExcelToolSchemas.WriteFormulas, true),
+                Tool("excel_clear_range", "Clear contents, formatting, or everything from an Excel range.", ExcelToolSchemas.ClearRange, true),
+                Tool("excel_format_range", "Apply only the specified formatting properties to a range; unspecified formatting remains unchanged. Supports fonts, fills, number formats, alignment, borders, sizing, and AutoFit.", ExcelToolSchemas.FormatRange, true),
+                Tool("excel_add_sheet", "Add a named worksheet before or after the active sheet, or at the end of the workbook.", ExcelToolSchemas.AddSheet, true),
+                Tool("excel_create_table", "Convert an existing range into a styled Excel table with optional headers, table name, and built-in table style.", ExcelToolSchemas.CreateTable, true),
+                Tool("excel_create_chart", "Create an embedded chart from an existing source range and place it at a target cell or immediately to the right of the data.", ExcelToolSchemas.CreateChart, true)
             };
         }
 
@@ -64,12 +70,36 @@ namespace Grid.Office
                         result = await _automation.ListSheetsAsync(cancellationToken).ConfigureAwait(false);
                         break;
                     case "excel_read_range":
-                        var read = JsonCodec.Deserialize<RangeRequest>(invocation.ArgumentsJson);
-                        result = await _automation.ReadRangeAsync(read.sheet_name, read.address, cancellationToken).ConfigureAwait(false);
+                        var read = JsonCodec.Deserialize<ReadRangeRequest>(invocation.ArgumentsJson);
+                        result = await _automation.ReadRangeAsync(read, cancellationToken).ConfigureAwait(false);
                         break;
                     case "excel_write_range":
                         var write = JsonCodec.Deserialize<WriteRangeRequest>(invocation.ArgumentsJson);
-                        result = await _automation.WriteRangeAsync(write.sheet_name, write.address, write.values, cancellationToken).ConfigureAwait(false);
+                        result = await _automation.WriteRangeAsync(write, cancellationToken).ConfigureAwait(false);
+                        break;
+                    case "excel_write_formulas":
+                        var formulas = JsonCodec.Deserialize<WriteFormulaRequest>(invocation.ArgumentsJson);
+                        result = await _automation.WriteFormulasAsync(formulas, cancellationToken).ConfigureAwait(false);
+                        break;
+                    case "excel_clear_range":
+                        var clear = JsonCodec.Deserialize<ClearRangeRequest>(invocation.ArgumentsJson);
+                        result = await _automation.ClearRangeAsync(clear, cancellationToken).ConfigureAwait(false);
+                        break;
+                    case "excel_format_range":
+                        var format = JsonCodec.Deserialize<FormatRangeRequest>(invocation.ArgumentsJson);
+                        result = await _automation.FormatRangeAsync(format, cancellationToken).ConfigureAwait(false);
+                        break;
+                    case "excel_add_sheet":
+                        var addSheet = JsonCodec.Deserialize<AddSheetRequest>(invocation.ArgumentsJson);
+                        result = await _automation.AddSheetAsync(addSheet, cancellationToken).ConfigureAwait(false);
+                        break;
+                    case "excel_create_table":
+                        var table = JsonCodec.Deserialize<CreateTableRequest>(invocation.ArgumentsJson);
+                        result = await _automation.CreateTableAsync(table, cancellationToken).ConfigureAwait(false);
+                        break;
+                    case "excel_create_chart":
+                        var chart = JsonCodec.Deserialize<CreateChartRequest>(invocation.ArgumentsJson);
+                        result = await _automation.CreateChartAsync(chart, cancellationToken).ConfigureAwait(false);
                         break;
                     default:
                         throw new InvalidOperationException("Unknown Excel tool '" + invocation.ToolName + "'.");
@@ -85,17 +115,6 @@ namespace Grid.Office
         private static OfficeToolDefinition Tool(string name, string description, string schema, bool destructive)
         {
             return new OfficeToolDefinition { Name = name, Description = description, InputSchemaJson = schema, Destructive = destructive, HostKind = "Excel" };
-        }
-
-        private class RangeRequest
-        {
-            public string sheet_name { get; set; }
-            public string address { get; set; }
-        }
-
-        private sealed class WriteRangeRequest : RangeRequest
-        {
-            public List<List<object>> values { get; set; }
         }
     }
 }

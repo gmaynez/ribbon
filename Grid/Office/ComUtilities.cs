@@ -11,7 +11,7 @@ namespace Grid.Office
             {
                 if (value != null && Marshal.IsComObject(value))
                 {
-                    Marshal.FinalReleaseComObject(value);
+                    Marshal.ReleaseComObject(value);
                 }
             }
             catch
