@@ -1,4 +1,5 @@
 using Ribbon.Broker.Acp;
+using System.Text.Json;
 using Xunit;
 
 namespace Ribbon.Broker.Tests.Acp;
@@ -45,5 +46,94 @@ public sealed class AcpProtocolBehaviorTests
         using var future = registry.Register(CancellationToken.None);
         Assert.False(future.CancelledByClient);
         Assert.False(future.Token.IsCancellationRequested);
+    }
+
+    [Fact]
+    public void ThoughtChunksPreserveMessageIdentityAndText()
+    {
+        using var document = JsonDocument.Parse("""
+            {
+              "sessionUpdate": "agent_thought_chunk",
+              "messageId": "thought-1",
+              "content": { "type": "text", "text": "Inspecting the current document…" }
+            }
+            """);
+
+        var update = AgentSessionManager.ParseSessionUpdate("session-1", document.RootElement);
+
+        Assert.Equal("agent_thought_chunk", update.UpdateKind);
+        Assert.Equal("thought-1", update.MessageId);
+        Assert.Equal("Inspecting the current document…", update.Text);
+    }
+
+    [Fact]
+    public void ToolUpdatesExposeProgressContentAndStatus()
+    {
+        using var document = JsonDocument.Parse("""
+            {
+              "sessionUpdate": "tool_call_update",
+              "toolCallId": "call-1",
+              "title": "Format the sales table",
+              "kind": "edit",
+              "status": "completed",
+              "content": [
+                {
+                  "type": "content",
+                  "content": { "type": "text", "text": "Applied the requested table style." }
+                }
+              ]
+            }
+            """);
+
+        var update = AgentSessionManager.ParseSessionUpdate("session-1", document.RootElement);
+
+        Assert.Equal("call-1", update.ToolCallId);
+        Assert.Equal("Format the sales table", update.ToolName);
+        Assert.Equal("edit", update.ToolKind);
+        Assert.Equal("completed", update.Status);
+        Assert.Equal("Applied the requested table style.", update.Text);
+    }
+
+    [Fact]
+    public void PlansExposeEntriesForInlineProgressRendering()
+    {
+        using var document = JsonDocument.Parse("""
+            {
+              "sessionUpdate": "plan",
+              "entries": [
+                { "content": "Inspect the workbook", "priority": "high", "status": "completed" },
+                { "content": "Create the chart", "priority": "medium", "status": "in_progress" }
+              ]
+            }
+            """);
+
+        var update = AgentSessionManager.ParseSessionUpdate("session-1", document.RootElement);
+
+        Assert.Collection(
+            update.PlanEntries!,
+            entry =>
+            {
+                Assert.Equal("Inspect the workbook", entry.Content);
+                Assert.Equal("completed", entry.Status);
+            },
+            entry =>
+            {
+                Assert.Equal("Create the chart", entry.Content);
+                Assert.Equal("in_progress", entry.Status);
+            });
+    }
+
+    [Fact]
+    public void SessionCloseIsUsedOnlyWhenAdvertisedByTheAgent()
+    {
+        using var supported = JsonDocument.Parse("""
+            { "agentCapabilities": { "sessionCapabilities": { "close": {} } } }
+            """);
+        using var unsupported = JsonDocument.Parse("""
+            { "agentCapabilities": { "sessionCapabilities": {} } }
+            """);
+
+        Assert.True(AgentRuntime.SupportsSessionCloseCapability(supported.RootElement));
+        Assert.False(AgentRuntime.SupportsSessionCloseCapability(unsupported.RootElement));
     }
 }

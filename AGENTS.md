@@ -23,6 +23,7 @@ The active Excel tool surface is split deliberately:
 - `Grid/Office/ExcelToolSchemas.cs` — strict input schemas and agent-facing parameter descriptions.
 - `Grid/Office/ExcelToolModels.cs` — JSON request DTOs compatible with `JavaScriptSerializer`.
 - `Grid/Office/ExcelAutomationService.cs` — Office-thread validation, COM operations, and JSON-safe results.
+- `Grid/Office/ExcelCheckpointService.cs` — turn snapshots and in-place restoration for the Excel tool surface.
 
 `Grid.csproj` uses explicit `Compile` items rather than SDK-style globbing. Add every new active source file to the project.
 
@@ -32,6 +33,7 @@ The active Word tool surface follows the same split:
 - `Quill/Office/WordToolSchemas.cs` — strict schemas and agent-facing parameter descriptions.
 - `Quill/Office/WordToolModels.cs` — `JavaScriptSerializer` request DTOs.
 - `Quill/Office/WordAutomationService.cs` — Office-thread validation and Word COM operations.
+- `Quill/Office/WordCheckpointService.cs` — main-story WordOpenXML checkpoints and restoration.
 
 `Quill.csproj` includes `Office/*.cs`, so new Word tool source files are compiled automatically.
 
@@ -41,6 +43,7 @@ The active PowerPoint tool surface follows the same split:
 - `Deck/Office/PowerPointToolSchemas.cs` — strict input schemas and agent-facing parameter descriptions.
 - `Deck/Office/PowerPointToolModels.cs` — `JavaScriptSerializer` request DTOs.
 - `Deck/Office/PowerPointAutomationService.cs` — Office-thread validation and PowerPoint COM operations.
+- `Deck/Office/PowerPointCheckpointService.cs` — presentation-copy checkpoints and slide restoration.
 
 `Deck.csproj` includes `Office/*.cs`, so new PowerPoint tool source files are compiled automatically.
 
@@ -62,6 +65,7 @@ The active PowerPoint tool surface follows the same split:
 14. PowerPoint slide numbers are one-based snapshots of the current presentation order. Refresh them after slide lifecycle changes and use the returned `shape_name` for later shape mutations.
 15. Treat `powerpoint_format_shape` as a patch. Express geometry in points, keep chart and table payloads bounded to 10,000 data cells, and accept only existing absolute local paths for image insertion.
 16. Compose MCP server instructions from the live tool catalog. Mention only available tool names, preserve preferred-host order, keep a safe no-tools fallback, and test single-host, mixed-host, partial, and unknown-host catalogs.
+17. Create and restore turn checkpoints inside the owning Office process. Restore only the documented Ribbon tool surface, capture a safety checkpoint first, and reset the ACP session after restore so the agent must inspect fresh state.
 
 ## Coding guidance
 

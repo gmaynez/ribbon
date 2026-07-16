@@ -22,6 +22,7 @@ namespace Ribbon.Contracts
         public const string StartSession = "session/start";
         public const string PromptSession = "session/prompt";
         public const string CancelSession = "session/cancel";
+        public const string CloseSession = "session/close";
         public const string SetSessionConfigOption = "session/set_config_option";
         public const string SessionUpdate = "session/update";
         public const string PermissionRequest = "session/request_permission";
@@ -223,11 +224,22 @@ namespace Ribbon.Contracts
     {
         public string SessionId { get; set; }
         public string UpdateKind { get; set; }
+        public string MessageId { get; set; }
         public string Text { get; set; }
+        public string ToolCallId { get; set; }
         public string ToolName { get; set; }
+        public string ToolKind { get; set; }
         public string Status { get; set; }
         public string RawJson { get; set; }
         public IList<SessionConfigOption> ConfigOptions { get; set; }
+        public IList<SessionPlanEntry> PlanEntries { get; set; }
+    }
+
+    public sealed class SessionPlanEntry
+    {
+        public string Content { get; set; }
+        public string Priority { get; set; }
+        public string Status { get; set; }
     }
 
     public sealed class PermissionPrompt
@@ -250,5 +262,6 @@ namespace Ribbon.Contracts
     {
         public string OptionId { get; set; }
         public bool Cancelled { get; set; }
+        public bool RememberForSession { get; set; }
     }
 }

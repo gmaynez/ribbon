@@ -8,7 +8,9 @@ The result is one agent experience across Office without forcing Excel to automa
 
 - Browse the public ACP Registry from the Office task pane.
 - Install Windows binary and `npx` agent distributions. Ribbon provisions a private Node.js LTS runtime when needed and verifies the official Node archive checksum.
-- Launch ACP v1 agents, authenticate them, create sessions, stream updates, cancel turns, and answer permission requests.
+- Launch ACP v1 agents, authenticate them, create sessions, and render message chunks, plans, thoughts, and tool progress inline while a turn runs.
+- Gate every destructive Office MCP tool in Ribbon as well as relaying ACP permission requests, with an option to remember an approval for that action during the active agent session.
+- Capture a local document checkpoint before each prompt and restore an earlier turn from the task pane; Ribbon saves a safety checkpoint first and restarts the agent session after restore.
 - Populate an agent-driven model selector from ACP session configuration options and keep it synchronized when the agent changes configuration.
 - Give every agent a local stdio MCP server named `ribbon-office`.
 - Compose MCP guidance from the tools currently connected to that agent session, with the launching Office host's workflow first.
@@ -124,6 +126,7 @@ Agent state is stored under `%LOCALAPPDATA%\Ribbon`:
 - `agents` — downloaded binary agents
 - `runtimes` — Ribbon-managed runtimes such as Node.js
 - `sessions` — isolated ACP working directories and Office guidance
+- `Checkpoints` — temporary per-host snapshots used by active task panes; removed when that Office host shuts down
 - `cache` — cached ACP Registry document
 - `logs` — broker diagnostics
 

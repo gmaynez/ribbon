@@ -194,6 +194,7 @@
   <ItemGroup>
     <Compile Include="GridRibbon.cs" />
     <Compile Include="Office\ComUtilities.cs" />
+    <Compile Include="Office\ExcelCheckpointService.cs" />
     <Compile Include="Office\ExcelAutomationService.cs" />
     <Compile Include="Office\ExcelToolModels.cs" />
     <Compile Include="Office\ExcelToolSchemas.cs" />

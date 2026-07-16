@@ -13,12 +13,15 @@ namespace Quill.Office
     {
         private readonly Word.Application _application;
         private readonly WordAutomationService _automation;
+        private readonly WordCheckpointService _checkpoints;
         private readonly string _hostId = "word-" + Guid.NewGuid().ToString("N");
 
         public QuillOfficeHost(Word.Application application, SynchronizationContext context)
         {
             _application = application ?? throw new ArgumentNullException(nameof(application));
-            _automation = new WordAutomationService(application, new Ribbon.Vsto.OfficeDispatcher(context));
+            var dispatcher = new Ribbon.Vsto.OfficeDispatcher(context);
+            _automation = new WordAutomationService(application, dispatcher);
+            _checkpoints = new WordCheckpointService(application, dispatcher);
         }
 
         public HostRegistration Registration
@@ -118,6 +121,16 @@ namespace Quill.Office
             {
                 return new OfficeToolResult { Success = false, Error = exception.GetBaseException().Message };
             }
+        }
+
+        public Task<DocumentCheckpoint> CreateCheckpointAsync(string label, CancellationToken cancellationToken)
+        {
+            return _checkpoints.CreateAsync(Registration, label, cancellationToken);
+        }
+
+        public Task RestoreCheckpointAsync(DocumentCheckpoint checkpoint, CancellationToken cancellationToken)
+        {
+            return _checkpoints.RestoreAsync(Registration, checkpoint, cancellationToken);
         }
 
         private static OfficeToolDefinition Tool(string name, string description, string schema, bool destructive)

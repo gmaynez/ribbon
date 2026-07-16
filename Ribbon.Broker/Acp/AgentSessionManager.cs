@@ -149,6 +149,47 @@ internal sealed class AgentSessionManager : IAsyncDisposable
         await session.Runtime.Connection.NotifyAsync("session/cancel", new { sessionId = request.SessionId }, cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task CloseAsync(SessionCancelRequest request, CancellationToken cancellationToken)
+    {
+        var session = GetSession(request.SessionId);
+        if (!_sessions.TryRemove(new KeyValuePair<string, SessionContext>(request.SessionId, session))) return;
+        session.PendingPermissions.CancelAll();
+
+        var closedByAgent = false;
+        if (session.Runtime.SupportsSessionClose)
+        {
+            try
+            {
+                await session.Runtime.Connection.RequestAsync(
+                    "session/close",
+                    new { sessionId = request.SessionId },
+                    cancellationToken).ConfigureAwait(false);
+                closedByAgent = true;
+            }
+            catch (Exception exception)
+            {
+                _log.Error($"Agent {session.Runtime.Agent.Id} failed to close ACP session {request.SessionId}; Ribbon will retire the runtime when possible.", exception);
+            }
+        }
+        else
+        {
+            try
+            {
+                await session.Runtime.Connection.NotifyAsync(
+                    "session/cancel",
+                    new { sessionId = request.SessionId },
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                _log.Error($"Agent {session.Runtime.Agent.Id} failed to cancel ACP session {request.SessionId} before retirement.", exception);
+            }
+        }
+
+        if (closedByAgent) return;
+        await RetireUnusedRuntimeAsync(session.Runtime).ConfigureAwait(false);
+    }
+
     public async Task<SessionConfigOptionsResponse> SetConfigOptionAsync(SessionConfigOptionRequest request, CancellationToken cancellationToken)
     {
         var session = GetSession(request.SessionId);
@@ -252,19 +293,35 @@ internal sealed class AgentSessionManager : IAsyncDisposable
             return;
         }
         var update = parameters.GetProperty("update");
-        var kind = update.TryGetProperty("sessionUpdate", out var kindElement) ? kindElement.GetString() ?? "unknown" : "unknown";
+        var message = ParseSessionUpdate(sessionId, update);
+
+        if (message.UpdateKind == "config_option_update")
+        {
+            session.ReplaceConfigOptions(message.ConfigOptions ?? []);
+        }
+        else if (message.UpdateKind == "tool_call" || message.UpdateKind == "tool_call_update")
+        {
+            session.HydrateToolCall(message);
+        }
+        await SendUpdateAsync(session, message, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal static SessionUpdateMessage ParseSessionUpdate(string sessionId, JsonElement update)
+    {
+        var kind = update.TryGetProperty("sessionUpdate", out var kindElement)
+            ? kindElement.GetString() ?? "unknown"
+            : "unknown";
         var message = new SessionUpdateMessage
         {
             SessionId = sessionId,
             UpdateKind = kind,
+            MessageId = update.TryGetProperty("messageId", out var messageId) ? messageId.GetString() : null,
             RawJson = update.GetRawText()
         };
 
         if (kind == "config_option_update")
         {
-            var configOptions = AcpSessionConfig.Parse(update);
-            session.ReplaceConfigOptions(configOptions);
-            message.ConfigOptions = configOptions;
+            message.ConfigOptions = AcpSessionConfig.Parse(update);
         }
         else if ((kind == "agent_message_chunk" || kind == "agent_thought_chunk" || kind == "user_message_chunk")
             && update.TryGetProperty("content", out var content))
@@ -273,14 +330,23 @@ internal sealed class AgentSessionManager : IAsyncDisposable
         }
         else if (kind == "tool_call" || kind == "tool_call_update")
         {
+            message.ToolCallId = update.TryGetProperty("toolCallId", out var toolCallId) ? toolCallId.GetString() : null;
             message.ToolName = update.TryGetProperty("title", out var title) ? title.GetString() : null;
+            message.ToolKind = update.TryGetProperty("kind", out var toolKind) ? toolKind.GetString() : null;
             message.Status = update.TryGetProperty("status", out var status) ? status.GetString() : null;
-            if (string.IsNullOrWhiteSpace(message.ToolName) && update.TryGetProperty("toolCallId", out var toolCallId))
-            {
-                message.ToolName = toolCallId.GetString();
-            }
+            message.Text = ExtractToolCallText(update);
         }
-        await SendUpdateAsync(session, message, cancellationToken).ConfigureAwait(false);
+        else if (kind == "plan" && update.TryGetProperty("entries", out var entries) && entries.ValueKind == JsonValueKind.Array)
+        {
+            message.PlanEntries = entries.EnumerateArray().Select(entry => new SessionPlanEntry
+            {
+                Content = entry.TryGetProperty("content", out var entryContent) ? entryContent.GetString() ?? string.Empty : string.Empty,
+                Priority = entry.TryGetProperty("priority", out var priority) ? priority.GetString() : null,
+                Status = entry.TryGetProperty("status", out var entryStatus) ? entryStatus.GetString() : null
+            }).ToList();
+        }
+
+        return message;
     }
 
     private async Task<object?> HandleRequestAsync(AgentRuntime runtime, string method, JsonElement parameters, CancellationToken cancellationToken)
@@ -360,6 +426,23 @@ internal sealed class AgentSessionManager : IAsyncDisposable
         }
     }
 
+    private async Task RetireUnusedRuntimeAsync(AgentRuntime runtime)
+    {
+        await _runtimeGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (_sessions.Values.Any(session => ReferenceEquals(session.Runtime, runtime))) return;
+            if (_runtimes.TryRemove(new KeyValuePair<string, AgentRuntime>(runtime.Agent.Id, runtime)))
+            {
+                await runtime.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            _runtimeGate.Release();
+        }
+    }
+
     private static Task SendUpdateAsync(SessionContext session, SessionUpdateMessage message, CancellationToken cancellationToken)
     {
         return session.Client.NotifyAsync(RibbonProtocol.SessionUpdate, JsonCodec.Serialize(message), cancellationToken);
@@ -377,6 +460,37 @@ internal sealed class AgentSessionManager : IAsyncDisposable
         return string.Empty;
     }
 
+    private static string ExtractToolCallText(JsonElement update)
+    {
+        if (!update.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array)
+        {
+            return string.Empty;
+        }
+
+        var text = new StringBuilder();
+        foreach (var item in content.EnumerateArray())
+        {
+            JsonElement block;
+            if (item.ValueKind == JsonValueKind.Object
+                && item.TryGetProperty("type", out var itemType)
+                && itemType.GetString() == "content"
+                && item.TryGetProperty("content", out var nested))
+            {
+                block = nested;
+            }
+            else
+            {
+                block = item;
+            }
+
+            var value = ExtractContentText(block);
+            if (string.IsNullOrWhiteSpace(value)) continue;
+            if (text.Length > 0) text.AppendLine();
+            text.Append(value);
+        }
+        return text.ToString();
+    }
+
     private static string Sanitize(string value)
     {
         return string.Concat((value ?? string.Empty).Select(character => char.IsLetterOrDigit(character) || character == '-' ? character : '_'));
@@ -390,7 +504,9 @@ internal sealed class AgentSessionManager : IAsyncDisposable
     private sealed class SessionContext
     {
         private readonly object _configGate = new();
+        private readonly object _toolGate = new();
         private List<SessionConfigOption> _configOptions = [];
+        private readonly Dictionary<string, ToolCallState> _toolCalls = new(StringComparer.Ordinal);
 
         public SessionContext(string sessionId, string hostId, PipePeer client, AgentRuntime runtime)
         {
@@ -420,6 +536,33 @@ internal sealed class AgentSessionManager : IAsyncDisposable
             {
                 _configOptions = configOptions?.ToList() ?? [];
             }
+        }
+
+        public void HydrateToolCall(SessionUpdateMessage message)
+        {
+            if (message == null || string.IsNullOrWhiteSpace(message.ToolCallId)) return;
+            lock (_toolGate)
+            {
+                if (!_toolCalls.TryGetValue(message.ToolCallId, out var state))
+                {
+                    state = new ToolCallState();
+                    _toolCalls[message.ToolCallId] = state;
+                }
+
+                if (!string.IsNullOrWhiteSpace(message.ToolName)) state.Title = message.ToolName;
+                if (!string.IsNullOrWhiteSpace(message.ToolKind)) state.Kind = message.ToolKind;
+                if (!string.IsNullOrWhiteSpace(message.Status)) state.Status = message.Status;
+                message.ToolName = state.Title ?? message.ToolCallId;
+                message.ToolKind = state.Kind;
+                message.Status = state.Status;
+            }
+        }
+
+        private sealed class ToolCallState
+        {
+            public string? Title { get; set; }
+            public string? Kind { get; set; }
+            public string? Status { get; set; }
         }
     }
 }
@@ -519,6 +662,7 @@ internal sealed class AgentRuntime : IAsyncDisposable
     public InstalledAgentRecord Agent { get; }
     public AcpProcessConnection Connection { get; }
     public IReadOnlyList<AgentAuthenticationMethod> AuthenticationMethods { get; private set; } = Array.Empty<AgentAuthenticationMethod>();
+    public bool SupportsSessionClose { get; private set; }
 
     public async Task InitializeAsync(CancellationToken cancellationToken)
     {
@@ -550,12 +694,23 @@ internal sealed class AgentRuntime : IAsyncDisposable
                     Description = method.TryGetProperty("description", out var description) ? description.GetString() ?? string.Empty : string.Empty
                 }).ToList()
                 : Array.Empty<AgentAuthenticationMethod>();
+            SupportsSessionClose = SupportsSessionCloseCapability(result);
             _initialized = true;
         }
         finally
         {
             _initializeGate.Release();
         }
+    }
+
+    internal static bool SupportsSessionCloseCapability(JsonElement initializeResult)
+    {
+        return initializeResult.TryGetProperty("agentCapabilities", out var capabilities)
+            && capabilities.ValueKind == JsonValueKind.Object
+            && capabilities.TryGetProperty("sessionCapabilities", out var sessions)
+            && sessions.ValueKind == JsonValueKind.Object
+            && sessions.TryGetProperty("close", out var close)
+            && (close.ValueKind == JsonValueKind.Object || close.ValueKind == JsonValueKind.True);
     }
 
     public async ValueTask DisposeAsync()

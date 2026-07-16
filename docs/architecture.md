@@ -24,8 +24,9 @@ This keeps failure and deployment boundaries aligned with Office while preservin
 7. The task pane renders ACP `configOptions` with category `model` and changes them through `session/set_config_option`.
 8. During MCP `initialize`, the proxy asks the primary broker for the live tool catalog. It composes an inspect–act–verify playbook from only those capabilities, with the preferred Office host first.
 9. A later MCP `tools/list` refreshes the live catalog; every listed tool retains its host routing identity, description, strict schema, and mutation annotations.
-10. MCP calls are routed to the VSTO process that owns the selected tool and executed on that Office application's UI thread.
-11. ACP session and configuration updates stream back through the broker to the task pane.
+10. Before each prompt, the owning VSTO host captures a local checkpoint of the document state that Ribbon tools can mutate.
+11. MCP calls are routed to the VSTO process that owns the selected tool. Destructive definitions require user approval there before execution on that Office application's UI thread.
+12. ACP message chunks, thoughts, plans, tool progress, and configuration updates stream back through the broker to the task pane.
 
 The broker pipe uses a small versioned envelope from `Ribbon.Contracts`. Its pipe name is versioned as well, preventing a newly built add-in from silently attaching to an older long-lived broker that cannot provide newly required payloads. Payloads are JSON strings so both .NET Framework 4.8 and modern .NET can share the protocol without sharing a JSON runtime.
 
@@ -39,7 +40,7 @@ The broker pipe uses a small versioned envelope from `Ribbon.Contracts`. Its pip
 | ACP agent | Agent-defined process | Reasoning and tool selection |
 | MCP proxy | Additional Ribbon Broker process | stdio MCP endpoint supplied to one ACP session |
 
-One primary Ribbon Broker process is expected while at least one Office host is connected. Each live ACP session can add a second Ribbon Broker process running with `--mcp-stdio`; it is a thin stdio proxy, not another primary broker. When an Office pipe client disconnects, the broker releases that client's sessions, cancels pending permission requests, and terminates agent runtimes that no longer serve a connected session. This also closes their MCP proxy processes instead of accumulating them across Office restarts. The primary broker exits after the last registered Office host disconnects, so the next Office launch starts the current deployed broker build.
+One primary Ribbon Broker process is expected while at least one Office host is connected. Each live ACP session can add a second Ribbon Broker process running with `--mcp-stdio`; it is a thin stdio proxy, not another primary broker. When the user switches agents or restores a checkpoint, Ribbon closes the superseded session through capability-gated ACP `session/close`; agents without that capability have their now-unused runtime retired so its MCP proxy cannot accumulate. When an Office pipe client disconnects, the broker releases that client's sessions, cancels pending permission requests, and terminates agent runtimes that no longer serve a connected session. The primary broker exits after the last registered Office host disconnects, so the next Office launch starts the current deployed broker build.
 
 COM calls never run on the broker thread. Each host adapter dispatches work back to the synchronization context captured during VSTO startup.
 
@@ -62,8 +63,19 @@ Installed-agent records are local and remain available when the Registry is offl
 - ZIP entries are contained within a dedicated installation directory.
 - Agent sessions run in Ribbon-owned directories rather than in the user's document folder.
 - ACP filesystem and terminal client capabilities are declared unavailable.
-- User-visible ACP permission requests are relayed to an Office modal confirmation dialog, defaulting to denial.
-- MCP write tools are marked destructive; read tools are marked read-only.
+- User-visible ACP permission requests preserve the agent's `allow_once`, `allow_always`, `reject_once`, and `reject_always` choices and default to denial.
+- MCP write tools are marked destructive and are independently gated in the owning VSTO host; a remembered approval is scoped to one tool action and one active agent session.
+- Checkpoint restore always requires explicit confirmation, captures the current state first, and resets the ACP session after the document changes.
+
+## Turn checkpoints
+
+Checkpoints stay inside the Office trust boundary under `%LOCALAPPDATA%\Ribbon\Checkpoints\<host-id>` and are removed when that host runtime shuts down. The shared task pane keeps the newest twelve checkpoints and creates one before every prompt. Restore does not overwrite the user's saved file or replace the open Office document object; each host adapter restores the surface Ribbon can mutate into that existing object, then starts a fresh ACP session so later tool calls must inspect the restored state again.
+
+- Excel checkpoints use `Workbook.SaveCopyAs`; restore copies the snapshot's sheets back into the active workbook as a group, preserving sheet content, formatting, tables, charts, and cross-sheet formulas.
+- Word checkpoints store the main-story `WordOpenXML` and replace that story on restore, covering the text, formatting, lists, tables, comments, and breaks exposed by Ribbon's Word tools.
+- PowerPoint checkpoints use `Presentation.SaveCopyAs`; restore replaces the active presentation's slides from the snapshot, including their shapes, tables, charts, notes, and slide formatting.
+
+These are Ribbon-tool checkpoints rather than general Office version history. Changes outside the surfaces above, such as VBA projects or Word headers and footers, are not promised to roll back.
 
 An installed ACP agent is still executable code with the permissions of the signed-in user. Production releases should add publisher/signature information to the registry UI and sign Ribbon's own binaries and deployment manifests.
 

@@ -11,6 +11,7 @@ namespace Ribbon.Vsto
     {
         private readonly IOfficeHost _host;
         private readonly BrokerClient _client;
+        private readonly string _hostId;
         private readonly CancellationTokenSource _lifetime = new CancellationTokenSource();
         private readonly CancellationToken _lifetimeToken;
         private Task _startTask;
@@ -19,6 +20,7 @@ namespace Ribbon.Vsto
         public VstoHostRuntime(IOfficeHost host, SynchronizationContext ui)
         {
             _host = host ?? throw new ArgumentNullException(nameof(host));
+            _hostId = host.Registration.HostId;
             _client = new BrokerClient(host, ui ?? throw new ArgumentNullException(nameof(ui)));
             _lifetimeToken = _lifetime.Token;
             _client.SessionUpdate += (sender, message) => SessionUpdate?.Invoke(this, message);
@@ -65,12 +67,19 @@ namespace Ribbon.Vsto
             await StartAsync().ConfigureAwait(false);
             var documentPath = Registration.DocumentPath;
             var workingDirectory = !string.IsNullOrWhiteSpace(documentPath) ? Path.GetDirectoryName(documentPath) : null;
-            return await _client.RequestAsync<SessionStartResponse>(RibbonProtocol.StartSession, new SessionStartRequest
+            var response = await _client.RequestAsync<SessionStartResponse>(RibbonProtocol.StartSession, new SessionStartRequest
             {
                 AgentId = agentId,
                 HostId = Registration.HostId,
                 WorkingDirectory = workingDirectory
             }, _lifetimeToken).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(response.SessionId)) _client.SetActiveSession(response.SessionId);
+            return response;
+        }
+
+        public void ClearActiveSession()
+        {
+            _client.SetActiveSession(string.Empty);
         }
 
         public async Task AuthenticateAsync(string agentId, string methodId)
@@ -97,6 +106,12 @@ namespace Ribbon.Vsto
             return _client.RequestAsync(RibbonProtocol.CancelSession, new SessionCancelRequest { SessionId = sessionId }, _lifetimeToken);
         }
 
+        public Task CloseSessionAsync(string sessionId)
+        {
+            if (string.IsNullOrWhiteSpace(sessionId)) return Task.CompletedTask;
+            return _client.RequestAsync(RibbonProtocol.CloseSession, new SessionCancelRequest { SessionId = sessionId }, _lifetimeToken);
+        }
+
         public Task<SessionConfigOptionsResponse> SetSessionConfigOptionAsync(string sessionId, string configId, string value)
         {
             return _client.RequestAsync<SessionConfigOptionsResponse>(RibbonProtocol.SetSessionConfigOption, new SessionConfigOptionRequest
@@ -107,11 +122,22 @@ namespace Ribbon.Vsto
             }, _lifetimeToken);
         }
 
+        public Task<DocumentCheckpoint> CreateCheckpointAsync(string label)
+        {
+            return _host.CreateCheckpointAsync(label, _lifetimeToken);
+        }
+
+        public Task RestoreCheckpointAsync(DocumentCheckpoint checkpoint)
+        {
+            return _host.RestoreCheckpointAsync(checkpoint, _lifetimeToken);
+        }
+
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
             _lifetime.Cancel();
             _client.Dispose();
+            DocumentCheckpointStorage.DeleteHostCheckpoints(_hostId);
             // Async task-pane continuations may still hold the token while Office tears down.
             // Let the process reclaim the source instead of racing those continuations.
         }

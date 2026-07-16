@@ -14,7 +14,9 @@ namespace Ribbon.Vsto
         private readonly RibbonPalette _palette;
         private readonly RibbonComboBox _agents;
         private readonly RibbonComboBox _models;
+        private readonly RibbonComboBox _checkpoints;
         private readonly RibbonButton _manage;
+        private readonly RibbonButton _restoreCheckpoint;
         private readonly RichTextBox _transcript;
         private readonly TextBox _prompt;
         private readonly RibbonButton _send;
@@ -27,6 +29,9 @@ namespace Ribbon.Vsto
         private readonly string _productName;
         private Font _transcriptRegularFont;
         private Font _transcriptBoldFont;
+        private Font _transcriptItalicFont;
+        private readonly Dictionary<string, string> _toolStatuses = new Dictionary<string, string>(StringComparer.Ordinal);
+        private readonly List<DocumentCheckpoint> _checkpointItems = new List<DocumentCheckpoint>();
         private string _sessionId;
         private string _sessionAgentId;
         private string _sessionStartAgentId;
@@ -39,6 +44,10 @@ namespace Ribbon.Vsto
         private bool _suppressModelSelection;
         private bool _modelAvailable;
         private bool _busy;
+        private bool _activityVisible;
+        private bool _thoughtVisible;
+        private bool _responseVisible;
+        private string _planSignature;
 
         public RibbonSidebarControl(VstoHostRuntime runtime)
         {
@@ -48,7 +57,9 @@ namespace Ribbon.Vsto
             _productName = RibbonProductIdentity.GetProductName(_hostKind);
             _agents = new RibbonComboBox(_palette);
             _models = new RibbonComboBox(_palette);
+            _checkpoints = new RibbonComboBox(_palette);
             _manage = new RibbonButton(_palette, RibbonButtonKind.Secondary) { Text = "Agents", Glyph = RibbonGlyph.Agents, Width = 88 };
+            _restoreCheckpoint = new RibbonButton(_palette, RibbonButtonKind.Secondary) { Text = "Restore", Width = 78 };
             _transcript = new RichTextBox();
             _prompt = new TextBox();
             _send = new RibbonButton(_palette, RibbonButtonKind.Primary) { Text = "Send", Glyph = RibbonGlyph.Send, Width = 80 };
@@ -85,6 +96,7 @@ namespace Ribbon.Vsto
                 _runtime.SessionUpdate -= RuntimeOnSessionUpdate;
                 _transcriptBoldFont?.Dispose();
                 _transcriptRegularFont?.Dispose();
+                _transcriptItalicFont?.Dispose();
                 _toolTip.Dispose();
             }
             base.Dispose(disposing);
@@ -210,9 +222,10 @@ namespace Ribbon.Vsto
         private Control BuildTranscript()
         {
             var surface = new RibbonSurface(_palette) { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 10), Padding = new Padding(12, 9, 12, 12) };
-            var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, BackColor = _palette.Surface };
+            var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, BackColor = _palette.Surface };
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
             layout.Controls.Add(LabelFor("CONVERSATION", 7.5f, FontStyle.Bold, _palette.MutedText), 0, 0);
             _transcript.Dock = DockStyle.Fill;
             _transcript.ReadOnly = true;
@@ -221,13 +234,48 @@ namespace Ribbon.Vsto
             _transcript.ForeColor = _palette.Text;
             _transcriptRegularFont = new Font(Font.FontFamily, 9.5f, FontStyle.Regular);
             _transcriptBoldFont = new Font(Font.FontFamily, 9.25f, FontStyle.Bold);
+            _transcriptItalicFont = new Font(Font.FontFamily, 9.25f, FontStyle.Italic);
             _transcript.Font = _transcriptRegularFont;
             _transcript.DetectUrls = true;
             _transcript.HideSelection = false;
             _transcript.AccessibleName = "Conversation transcript";
             layout.Controls.Add(_transcript, 0, 1);
+            layout.Controls.Add(BuildCheckpointBar(), 0, 2);
             surface.Controls.Add(layout);
             return surface;
+        }
+
+        private Control BuildCheckpointBar()
+        {
+            var bar = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 3,
+                RowCount = 1,
+                BackColor = _palette.Surface,
+                Margin = new Padding(0, 5, 0, 0)
+            };
+            bar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 78));
+            bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            bar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 84));
+            bar.Controls.Add(LabelFor("CHECKPOINT", 7.5f, FontStyle.Bold, _palette.MutedText), 0, 0);
+
+            _checkpoints.Dock = DockStyle.Fill;
+            _checkpoints.DropDownStyle = ComboBoxStyle.DropDownList;
+            _checkpoints.DisplayMember = "DisplayName";
+            _checkpoints.Enabled = false;
+            _checkpoints.AccessibleName = "Document checkpoint";
+            _toolTip.SetToolTip(_checkpoints, "Choose a document state captured before an agent turn.");
+            bar.Controls.Add(_checkpoints, 1, 0);
+
+            _restoreCheckpoint.Dock = DockStyle.Fill;
+            _restoreCheckpoint.Margin = new Padding(6, 0, 0, 0);
+            _restoreCheckpoint.Enabled = false;
+            _restoreCheckpoint.Click += async (sender, args) => await RestoreSelectedCheckpointAsync();
+            _restoreCheckpoint.AccessibleName = "Restore selected document checkpoint";
+            _toolTip.SetToolTip(_restoreCheckpoint, "Restore the open document to the selected checkpoint and start a fresh agent session.");
+            bar.Controls.Add(_restoreCheckpoint, 2, 0);
+            return bar;
         }
 
         private Control BuildComposer()
@@ -361,12 +409,15 @@ namespace Ribbon.Vsto
         private async Task AgentSelectionChangedAsync()
         {
             if (_suppressAgentSelection) return;
+            var previousSessionId = _sessionId;
             _sessionId = null;
             _sessionAgentId = null;
             _sessionConfigOptions = new List<SessionConfigOption>();
+            _runtime.ClearActiveSession();
             ShowModelPlaceholder(GetSelectedAgent() == null ? "Select an agent" : "Loading models…");
             try
             {
+                if (!string.IsNullOrWhiteSpace(previousSessionId)) await _runtime.CloseSessionAsync(previousSessionId);
                 await EnsureSelectedSessionAsync();
                 if (GetSelectedAgent() != null) SetStatus("Ready", _palette.Success);
             }
@@ -550,6 +601,9 @@ namespace Ribbon.Vsto
             {
                 await EnsureSessionAsync(agent);
                 if (string.IsNullOrWhiteSpace(_sessionId)) throw new InvalidOperationException("The ACP agent did not create a session.");
+                SetStatus("Creating document checkpoint…", _palette.Accent);
+                var checkpoint = await _runtime.CreateCheckpointAsync(CheckpointLabel(text));
+                AddCheckpoint(checkpoint);
                 await _runtime.PromptAsync(_sessionId, text);
                 SetStatus("Ready", _palette.Success);
             }
@@ -577,6 +631,82 @@ namespace Ribbon.Vsto
             }
         }
 
+        private async Task RestoreSelectedCheckpointAsync()
+        {
+            DocumentCheckpoint selected = null;
+            RibbonUiThread.Run(this, () => selected = _checkpoints.SelectedItem as DocumentCheckpoint);
+            if (selected == null || _busy) return;
+
+            var answer = MessageBox.Show(
+                this,
+                "Restore the open " + RibbonProductIdentity.GetDocumentNoun(_hostKind) + " to:\r\n\r\n" + selected.DisplayName
+                    + "\r\n\r\nRibbon will first save the current state as another checkpoint. The agent session will restart so it does not rely on stale document context.",
+                "Restore Ribbon checkpoint",
+                MessageBoxButtons.OKCancel,
+                MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2);
+            if (answer != DialogResult.OK) return;
+
+            SetBusy(true);
+            try
+            {
+                SetStatus("Saving current state…", _palette.Accent);
+                var safety = await _runtime.CreateCheckpointAsync("Before checkpoint restore");
+                SetStatus("Restoring checkpoint…", _palette.Accent);
+                await _runtime.RestoreCheckpointAsync(selected);
+                AddCheckpoint(safety);
+
+                var previousSessionId = _sessionId;
+                _sessionId = null;
+                _sessionAgentId = null;
+                _sessionConfigOptions = new List<SessionConfigOption>();
+                _runtime.ClearActiveSession();
+                if (!string.IsNullOrWhiteSpace(previousSessionId)) await _runtime.CloseSessionAsync(previousSessionId);
+                ShowModelPlaceholder("Restarting agent session…");
+                AppendTranscript(Environment.NewLine + Environment.NewLine + "Checkpoint restored\n", _palette.Success, FontStyle.Bold);
+                AppendTranscript("The document is back at " + selected.DisplayName + ". A fresh agent session will be used for the next turn.\n", _palette.MutedText, FontStyle.Regular);
+                await EnsureSelectedSessionAsync();
+                SetStatus("Checkpoint restored", _palette.Success);
+            }
+            catch (Exception exception)
+            {
+                ShowError(exception);
+            }
+            finally
+            {
+                SetBusy(false);
+            }
+        }
+
+        private void AddCheckpoint(DocumentCheckpoint checkpoint)
+        {
+            if (checkpoint == null) return;
+            RibbonUiThread.Run(this, () =>
+            {
+                _checkpointItems.Insert(0, checkpoint);
+                _checkpoints.Items.Insert(0, checkpoint);
+                _checkpoints.SelectedIndex = 0;
+                while (_checkpointItems.Count > 12)
+                {
+                    var expired = _checkpointItems[_checkpointItems.Count - 1];
+                    _checkpointItems.RemoveAt(_checkpointItems.Count - 1);
+                    _checkpoints.Items.Remove(expired);
+                    DocumentCheckpointStorage.Delete(expired);
+                }
+                _checkpoints.Enabled = !_busy && _checkpointItems.Count > 0;
+                _restoreCheckpoint.Enabled = !_busy && _checkpointItems.Count > 0;
+            });
+        }
+
+        private static string CheckpointLabel(string prompt)
+        {
+            var singleLine = string.Join(" ", (prompt ?? string.Empty)
+                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+                .Trim();
+            if (singleLine.Length > 42) singleLine = singleLine.Substring(0, 39) + "…";
+            return string.IsNullOrWhiteSpace(singleLine) ? "Before agent turn" : "Before: " + singleLine;
+        }
+
         private void RuntimeOnSessionUpdate(object sender, SessionUpdateMessage update)
         {
             RibbonUiThread.Post(this, () => HandleSessionUpdate(update));
@@ -586,15 +716,36 @@ namespace Ribbon.Vsto
         {
             if (update.UpdateKind == "agent_message_chunk" && !string.IsNullOrEmpty(update.Text))
             {
+                if (_activityVisible && !_responseVisible)
+                {
+                    AppendTranscript(Environment.NewLine + "Response\n", _palette.Accent, FontStyle.Bold);
+                    _responseVisible = true;
+                }
                 AppendTranscript(update.Text, _palette.Text, FontStyle.Regular);
             }
             else if (update.UpdateKind == "agent_thought_chunk" && !string.IsNullOrEmpty(update.Text))
             {
+                if (!_thoughtVisible)
+                {
+                    AppendTranscript("Thinking\n", _palette.MutedText, FontStyle.Bold);
+                    _thoughtVisible = true;
+                    _activityVisible = true;
+                }
+                AppendTranscript(update.Text, _palette.MutedText, FontStyle.Italic);
                 SetStatus("Thinking…", _palette.Accent);
             }
             else if (update.UpdateKind == "tool_call" || update.UpdateKind == "tool_call_update")
             {
-                SetStatus(string.IsNullOrWhiteSpace(update.ToolName) ? "Using Office tools…" : update.ToolName + " · " + update.Status, _palette.Accent);
+                AppendToolActivity(update);
+                var status = FriendlyToolStatus(update.Status);
+                SetStatus(string.IsNullOrWhiteSpace(update.ToolName)
+                    ? "Using Office tools…"
+                    : update.ToolName + (string.IsNullOrWhiteSpace(status) ? string.Empty : " · " + status),
+                    string.Equals(update.Status, "failed", StringComparison.OrdinalIgnoreCase) ? _palette.Danger : _palette.Accent);
+            }
+            else if (update.UpdateKind == "plan")
+            {
+                AppendPlan(update.PlanEntries);
             }
             else if (update.UpdateKind == "config_option_update")
             {
@@ -651,6 +802,8 @@ namespace Ribbon.Vsto
                 _agents.Enabled = !busy;
                 _models.Enabled = !busy && _modelAvailable;
                 _manage.Enabled = !busy;
+                _checkpoints.Enabled = !busy && _checkpointItems.Count > 0;
+                _restoreCheckpoint.Enabled = !busy && _checkpointItems.Count > 0;
                 if (busy) SetStatusCore("Agent is working…", _palette.Accent);
             });
         }
@@ -693,6 +846,76 @@ namespace Ribbon.Vsto
             AppendTranscript("You\n", _palette.MutedText, FontStyle.Bold);
             AppendTranscript(text + Environment.NewLine + Environment.NewLine, _palette.Text, FontStyle.Regular);
             AppendTranscript(agentName + "\n", _palette.Accent, FontStyle.Bold);
+            _toolStatuses.Clear();
+            _activityVisible = false;
+            _thoughtVisible = false;
+            _responseVisible = false;
+            _planSignature = null;
+        }
+
+        private void AppendPlan(IList<SessionPlanEntry> entries)
+        {
+            if (entries == null || entries.Count == 0) return;
+            var signature = string.Join("|", entries.Select(entry =>
+                (entry.Content ?? string.Empty) + ":" + (entry.Status ?? string.Empty)));
+            if (string.Equals(signature, _planSignature, StringComparison.Ordinal)) return;
+            _planSignature = signature;
+            AppendTranscript((_activityVisible ? Environment.NewLine : string.Empty) + "Plan\n", _palette.MutedText, FontStyle.Bold);
+            foreach (var entry in entries)
+            {
+                var marker = string.Equals(entry.Status, "completed", StringComparison.OrdinalIgnoreCase) ? "✓"
+                    : string.Equals(entry.Status, "in_progress", StringComparison.OrdinalIgnoreCase) ? "→"
+                    : "•";
+                var color = marker == "✓" ? _palette.Success : marker == "→" ? _palette.Accent : _palette.MutedText;
+                AppendTranscript(marker + " " + (entry.Content ?? string.Empty) + "\n", color, FontStyle.Regular);
+            }
+            _activityVisible = true;
+        }
+
+        private void AppendToolActivity(SessionUpdateMessage update)
+        {
+            var key = string.IsNullOrWhiteSpace(update.ToolCallId) ? update.ToolName ?? Guid.NewGuid().ToString("N") : update.ToolCallId;
+            _toolStatuses.TryGetValue(key, out var previousStatus);
+            var status = update.Status ?? string.Empty;
+            var first = !_toolStatuses.ContainsKey(key);
+            if (first && !_activityVisible)
+            {
+                AppendTranscript("Activity\n", _palette.MutedText, FontStyle.Bold);
+            }
+
+            if (first)
+            {
+                AppendTranscript("• " + (update.ToolName ?? "Office action") + "\n", _palette.Text, FontStyle.Regular);
+                _activityVisible = true;
+            }
+
+            if (!string.Equals(previousStatus, status, StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.Equals(status, "completed", StringComparison.OrdinalIgnoreCase))
+                {
+                    AppendTranscript("  ✓ Completed\n", _palette.Success, FontStyle.Regular);
+                }
+                else if (string.Equals(status, "failed", StringComparison.OrdinalIgnoreCase))
+                {
+                    AppendTranscript("  × Failed\n", _palette.Danger, FontStyle.Regular);
+                }
+                else if (!first && string.Equals(status, "in_progress", StringComparison.OrdinalIgnoreCase))
+                {
+                    AppendTranscript("  → In progress\n", _palette.Accent, FontStyle.Regular);
+                }
+                _toolStatuses[key] = status;
+            }
+
+            if (!string.IsNullOrWhiteSpace(update.Text))
+            {
+                AppendTranscript("  " + update.Text.Trim() + "\n", _palette.MutedText, FontStyle.Regular);
+            }
+        }
+
+        private static string FriendlyToolStatus(string status)
+        {
+            if (string.IsNullOrWhiteSpace(status)) return string.Empty;
+            return status.Replace('_', ' ');
         }
 
         private void UpdatePromptPlaceholder()
@@ -706,7 +929,9 @@ namespace Ribbon.Vsto
             _transcript.SelectionStart = _transcript.TextLength;
             _transcript.SelectionLength = 0;
             _transcript.SelectionColor = color;
-            _transcript.SelectionFont = style == FontStyle.Bold ? _transcriptBoldFont : _transcriptRegularFont;
+            _transcript.SelectionFont = style == FontStyle.Bold
+                ? _transcriptBoldFont
+                : style == FontStyle.Italic ? _transcriptItalicFont : _transcriptRegularFont;
             _transcript.AppendText(text);
             _transcript.SelectionStart = _transcript.TextLength;
             _transcript.ScrollToCaret();

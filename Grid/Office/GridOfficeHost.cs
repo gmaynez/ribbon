@@ -13,12 +13,15 @@ namespace Grid.Office
     {
         private readonly Excel.Application _application;
         private readonly ExcelAutomationService _automation;
+        private readonly ExcelCheckpointService _checkpoints;
         private readonly string _hostId = "excel-" + Guid.NewGuid().ToString("N");
 
         public GridOfficeHost(Excel.Application application, SynchronizationContext context)
         {
             _application = application ?? throw new ArgumentNullException(nameof(application));
-            _automation = new ExcelAutomationService(application, new OfficeDispatcher(context));
+            var dispatcher = new OfficeDispatcher(context);
+            _automation = new ExcelAutomationService(application, dispatcher);
+            _checkpoints = new ExcelCheckpointService(application, dispatcher);
         }
 
         public HostRegistration Registration
@@ -110,6 +113,16 @@ namespace Grid.Office
             {
                 return new OfficeToolResult { Success = false, Error = exception.GetBaseException().Message };
             }
+        }
+
+        public Task<DocumentCheckpoint> CreateCheckpointAsync(string label, CancellationToken cancellationToken)
+        {
+            return _checkpoints.CreateAsync(Registration, label, cancellationToken);
+        }
+
+        public Task RestoreCheckpointAsync(DocumentCheckpoint checkpoint, CancellationToken cancellationToken)
+        {
+            return _checkpoints.RestoreAsync(Registration, checkpoint, cancellationToken);
         }
 
         private static OfficeToolDefinition Tool(string name, string description, string schema, bool destructive)

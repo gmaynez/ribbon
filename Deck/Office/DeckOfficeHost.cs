@@ -13,12 +13,15 @@ namespace Deck.Office
     {
         private readonly PowerPoint.Application _application;
         private readonly PowerPointAutomationService _automation;
+        private readonly PowerPointCheckpointService _checkpoints;
         private readonly string _hostId = "powerpoint-" + Guid.NewGuid().ToString("N");
 
         public DeckOfficeHost(PowerPoint.Application application, SynchronizationContext context)
         {
             _application = application ?? throw new ArgumentNullException(nameof(application));
-            _automation = new PowerPointAutomationService(application, new OfficeDispatcher(context));
+            var dispatcher = new OfficeDispatcher(context);
+            _automation = new PowerPointAutomationService(application, dispatcher);
+            _checkpoints = new PowerPointCheckpointService(application, dispatcher);
         }
 
         public HostRegistration Registration
@@ -97,6 +100,16 @@ namespace Deck.Office
             {
                 return new OfficeToolResult { Success = false, Error = exception.GetBaseException().Message };
             }
+        }
+
+        public Task<DocumentCheckpoint> CreateCheckpointAsync(string label, CancellationToken cancellationToken)
+        {
+            return _checkpoints.CreateAsync(Registration, label, cancellationToken);
+        }
+
+        public Task RestoreCheckpointAsync(DocumentCheckpoint checkpoint, CancellationToken cancellationToken)
+        {
+            return _checkpoints.RestoreAsync(Registration, checkpoint, cancellationToken);
         }
 
         private static OfficeToolDefinition Tool(string name, string description, string schema, bool destructive)

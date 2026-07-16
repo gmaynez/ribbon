@@ -152,6 +152,10 @@ internal sealed class BrokerServer
                 await _sessions.CancelAsync(JsonCodec.Deserialize<SessionCancelRequest>(envelope.Payload), cancellationToken).ConfigureAwait(false);
                 return RpcEnvelope.Response(envelope, "{}");
 
+            case RibbonProtocol.CloseSession:
+                await _sessions.CloseAsync(JsonCodec.Deserialize<SessionCancelRequest>(envelope.Payload), cancellationToken).ConfigureAwait(false);
+                return RpcEnvelope.Response(envelope, "{}");
+
             case RibbonProtocol.SetSessionConfigOption:
                 {
                     var response = await _sessions.SetConfigOptionAsync(

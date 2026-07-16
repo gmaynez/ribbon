@@ -19,11 +19,15 @@ namespace Ribbon.Vsto
         private readonly ConcurrentDictionary<string, TaskCompletionSource<RpcEnvelope>> _pending =
             new ConcurrentDictionary<string, TaskCompletionSource<RpcEnvelope>>(StringComparer.Ordinal);
         private readonly SemaphoreSlim _writeGate = new SemaphoreSlim(1, 1);
+        private readonly SemaphoreSlim _permissionDialogGate = new SemaphoreSlim(1, 1);
+        private readonly object _permissionGate = new object();
+        private readonly HashSet<string> _rememberedPermissions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly CancellationTokenSource _closed = new CancellationTokenSource();
         private NamedPipeClientStream _pipe;
         private StreamReader _reader;
         private StreamWriter _writer;
         private Task _readLoop;
+        private string _activeSessionId;
         private int _disposed;
 
         public BrokerClient(IOfficeHost host, SynchronizationContext ui)
@@ -33,6 +37,16 @@ namespace Ribbon.Vsto
         }
 
         public event EventHandler<SessionUpdateMessage> SessionUpdate;
+
+        public void SetActiveSession(string sessionId)
+        {
+            lock (_permissionGate)
+            {
+                if (string.Equals(_activeSessionId, sessionId, StringComparison.Ordinal)) return;
+                _activeSessionId = sessionId ?? string.Empty;
+                _rememberedPermissions.Clear();
+            }
+        }
 
         public async Task ConnectAsync(CancellationToken cancellationToken)
         {
@@ -177,7 +191,19 @@ namespace Ribbon.Vsto
                         break;
                     case RibbonProtocol.InvokeTool:
                         var invocation = JsonCodec.Deserialize<OfficeToolInvocation>(envelope.Payload);
-                        var result = await _host.InvokeAsync(invocation, cancellationToken).ConfigureAwait(false);
+                        OfficeToolResult result;
+                        if (!await AuthorizeDestructiveToolAsync(invocation).ConfigureAwait(false))
+                        {
+                            result = new OfficeToolResult
+                            {
+                                Success = false,
+                                Error = "The user did not allow this document-changing Office action."
+                            };
+                        }
+                        else
+                        {
+                            result = await _host.InvokeAsync(invocation, cancellationToken).ConfigureAwait(false);
+                        }
                         response = RpcEnvelope.Response(envelope, JsonCodec.Serialize(result));
                         break;
                     case RibbonProtocol.PermissionRequest:
@@ -201,28 +227,102 @@ namespace Ribbon.Vsto
             }
         }
 
-        private Task<PermissionDecision> RequestPermissionAsync(PermissionPrompt prompt)
+        private async Task<PermissionDecision> RequestPermissionAsync(PermissionPrompt prompt)
         {
-            var completion = new TaskCompletionSource<PermissionDecision>();
-            _ui.Post(_ =>
+            var options = prompt.Options ?? new List<PermissionChoice>();
+            var allow = options.FirstOrDefault(option =>
+                option.Kind != null && option.Kind.StartsWith("allow", StringComparison.OrdinalIgnoreCase));
+            var permissionKey = PermissionKey("acp", prompt.Title);
+            if (allow != null && IsRemembered(permissionKey))
             {
-                var options = prompt.Options ?? new List<PermissionChoice>();
-                var allow = options.FirstOrDefault(option =>
-                    option.Kind != null && option.Kind.StartsWith("allow", StringComparison.OrdinalIgnoreCase))
-                    ?? options.FirstOrDefault();
-                var answer = MessageBox.Show(
-                    prompt.Title + "\r\n\r\nAllow this agent action?",
-                    "Ribbon agent permission",
-                    MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Question,
-                    MessageBoxDefaultButton.Button2);
-                completion.TrySetResult(new PermissionDecision
+                return new PermissionDecision { OptionId = allow.OptionId, Cancelled = false, RememberForSession = true };
+            }
+
+            await _permissionDialogGate.WaitAsync(_closed.Token).ConfigureAwait(false);
+            try
+            {
+                var completion = new TaskCompletionSource<PermissionDecision>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _ui.Post(_ =>
                 {
-                    Cancelled = answer != DialogResult.Yes || allow == null,
-                    OptionId = answer == DialogResult.Yes && allow != null ? allow.OptionId : string.Empty
-                });
-            }, null);
-            return completion.Task;
+                    try
+                    {
+                        var decision = PermissionDialog.ShowAcp(Form.ActiveForm, prompt, RibbonPalette.Detect());
+                        if (!decision.Cancelled && decision.RememberForSession) Remember(permissionKey);
+                        completion.TrySetResult(decision);
+                    }
+                    catch (Exception exception)
+                    {
+                        completion.TrySetException(exception);
+                    }
+                }, null);
+                using (_closed.Token.Register(() => completion.TrySetCanceled()))
+                {
+                    return await completion.Task.ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                _permissionDialogGate.Release();
+            }
+        }
+
+        private async Task<bool> AuthorizeDestructiveToolAsync(OfficeToolInvocation invocation)
+        {
+            var definition = _host.GetTools().FirstOrDefault(tool =>
+                string.Equals(tool.Name, invocation.ToolName, StringComparison.OrdinalIgnoreCase));
+            if (definition == null || !definition.Destructive) return true;
+
+            var permissionKey = PermissionKey("office", invocation.ToolName);
+            if (IsRemembered(permissionKey)) return true;
+
+            await _permissionDialogGate.WaitAsync(_closed.Token).ConfigureAwait(false);
+            try
+            {
+                var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _ui.Post(_ =>
+                {
+                    try
+                    {
+                        var decision = PermissionDialog.ShowDestructiveTool(
+                            Form.ActiveForm,
+                            invocation.ToolName,
+                            invocation.ArgumentsJson,
+                            RibbonPalette.Detect());
+                        if (!decision.Cancelled && decision.RememberForSession) Remember(permissionKey);
+                        completion.TrySetResult(!decision.Cancelled);
+                    }
+                    catch (Exception exception)
+                    {
+                        completion.TrySetException(exception);
+                    }
+                }, null);
+                using (_closed.Token.Register(() => completion.TrySetCanceled()))
+                {
+                    return await completion.Task.ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                _permissionDialogGate.Release();
+            }
+        }
+
+        private string PermissionKey(string category, string action)
+        {
+            lock (_permissionGate)
+            {
+                return (_activeSessionId ?? string.Empty) + "|" + category + "|" + (action ?? string.Empty);
+            }
+        }
+
+        private bool IsRemembered(string key)
+        {
+            lock (_permissionGate) return _rememberedPermissions.Contains(key);
+        }
+
+        private void Remember(string key)
+        {
+            lock (_permissionGate) _rememberedPermissions.Add(key);
         }
 
         private async Task WriteAsync(RpcEnvelope envelope, CancellationToken cancellationToken)
