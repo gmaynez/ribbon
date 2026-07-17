@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using Ribbon.Broker.Infrastructure;
 using Ribbon.Broker.Registry;
@@ -41,29 +42,38 @@ internal sealed class AcpProcessConnection : IAsyncDisposable
             return;
         }
 
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = _agent.Command,
-            WorkingDirectory = _workingDirectory,
-            UseShellExecute = false,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        };
-        foreach (var argument in _agent.Arguments)
-        {
-            startInfo.ArgumentList.Add(argument);
-        }
-        foreach (var pair in _agent.Environment)
-        {
-            startInfo.Environment[pair.Key] = pair.Value;
-        }
-
+        var startInfo = CreateStartInfo(_agent, _workingDirectory);
         _process = Process.Start(startInfo)
             ?? throw new InvalidOperationException($"Unable to start ACP agent '{_agent.Name}'.");
         _readLoop = ReadLoopAsync(_closed.Token);
         _errorLoop = PumpStandardErrorAsync(_process, _closed.Token);
+    }
+
+    internal static ProcessStartInfo CreateStartInfo(InstalledAgentRecord agent, string workingDirectory)
+    {
+        var utf8 = new UTF8Encoding(false);
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = agent.Command,
+            WorkingDirectory = workingDirectory,
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardInputEncoding = utf8,
+            StandardOutputEncoding = utf8,
+            StandardErrorEncoding = utf8,
+            CreateNoWindow = true
+        };
+        foreach (var argument in agent.Arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+        foreach (var pair in agent.Environment)
+        {
+            startInfo.Environment[pair.Key] = pair.Value;
+        }
+        return startInfo;
     }
 
     public async Task<JsonElement> RequestAsync(string method, object parameters, CancellationToken cancellationToken)

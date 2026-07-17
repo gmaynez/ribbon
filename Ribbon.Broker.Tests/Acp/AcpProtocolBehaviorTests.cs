@@ -1,4 +1,6 @@
 using Ribbon.Broker.Acp;
+using Ribbon.Broker.Registry;
+using System.Text;
 using System.Text.Json;
 using Xunit;
 
@@ -30,6 +32,26 @@ public sealed class AcpProtocolBehaviorTests
 
         Assert.Equal(-32603, error.Code);
         Assert.Equal("Unexpected failure.", error.Message);
+    }
+
+    [Fact]
+    public void AcpStdioUsesBomlessUtf8()
+    {
+        var startInfo = AcpProcessConnection.CreateStartInfo(
+            new InstalledAgentRecord
+            {
+                Command = "agent.exe",
+                Arguments = ["--stdio"],
+                Environment = new Dictionary<string, string> { ["RIBBON_TEST"] = "✓" }
+            },
+            @"C:\Ribbon\Session");
+
+        Assert.Equal(Encoding.UTF8.CodePage, startInfo.StandardInputEncoding!.CodePage);
+        Assert.Equal(Encoding.UTF8.CodePage, startInfo.StandardOutputEncoding!.CodePage);
+        Assert.Equal(Encoding.UTF8.CodePage, startInfo.StandardErrorEncoding!.CodePage);
+        Assert.Empty(startInfo.StandardInputEncoding.GetPreamble());
+        Assert.Empty(startInfo.StandardOutputEncoding.GetPreamble());
+        Assert.Empty(startInfo.StandardErrorEncoding.GetPreamble());
     }
 
     [Fact]
