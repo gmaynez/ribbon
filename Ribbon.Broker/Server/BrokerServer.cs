@@ -144,6 +144,18 @@ internal sealed class BrokerServer
                     return RpcEnvelope.Response(envelope, JsonCodec.Serialize(response));
                 }
 
+            case RibbonProtocol.ResumeSession:
+                {
+                    var response = await _sessions.ResumeAsync(JsonCodec.Deserialize<SessionResumeRequest>(envelope.Payload), peer, cancellationToken).ConfigureAwait(false);
+                    return RpcEnvelope.Response(envelope, JsonCodec.Serialize(response));
+                }
+
+            case RibbonProtocol.ListAgentSessions:
+                {
+                    var response = await _sessions.ListSessionsAsync(JsonCodec.Deserialize<AgentSessionListRequest>(envelope.Payload), cancellationToken).ConfigureAwait(false);
+                    return RpcEnvelope.Response(envelope, JsonCodec.Serialize(response));
+                }
+
             case RibbonProtocol.PromptSession:
                 await _sessions.PromptAsync(JsonCodec.Deserialize<SessionPromptRequest>(envelope.Payload), cancellationToken).ConfigureAwait(false);
                 return RpcEnvelope.Response(envelope, "{}");

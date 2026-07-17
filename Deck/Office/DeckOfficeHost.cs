@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Ribbon.Contracts;
@@ -29,16 +30,47 @@ namespace Deck.Office
             get
             {
                 string path = null;
-                try { path = _application.ActivePresentation?.FullName; } catch { }
+                string documentId = null;
+                try
+                {
+                    var presentation = _application.ActivePresentation;
+                    path = presentation?.FullName;
+                    var windowHandle = PresentationWindowHandle(presentation);
+                    documentId = OfficeDocumentIdentity.Get("powerpoint", windowHandle == 0
+                        ? path
+                        : Process.GetCurrentProcess().Id + "|" + windowHandle);
+                }
+                catch { }
                 return new HostRegistration
                 {
                     HostId = _hostId,
                     HostKind = "PowerPoint",
                     DisplayName = "Microsoft PowerPoint",
                     ProcessId = Process.GetCurrentProcess().Id,
+                    DocumentId = documentId,
                     DocumentPath = path,
                     Version = _application.Version
                 };
+            }
+        }
+
+        private static long PresentationWindowHandle(PowerPoint.Presentation presentation)
+        {
+            if (presentation == null) return 0;
+            PowerPoint.DocumentWindows windows = null;
+            PowerPoint.DocumentWindow window = null;
+            try
+            {
+                windows = presentation.Windows;
+                if (windows == null || windows.Count == 0) return 0;
+                window = windows[1];
+                return window?.HWND ?? 0;
+            }
+            catch { return 0; }
+            finally
+            {
+                if (window != null) Marshal.ReleaseComObject(window);
+                if (windows != null) Marshal.ReleaseComObject(windows);
             }
         }
 

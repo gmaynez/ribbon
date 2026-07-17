@@ -70,6 +70,10 @@ internal sealed class AgentSessionManager : IAsyncDisposable
                 {
                     SessionId = string.Empty,
                     AgentName = installed.Name,
+                    WorkingDirectory = workingDirectory,
+                    SupportsLoad = runtime.SupportsSessionLoad,
+                    SupportsResume = runtime.SupportsSessionResume,
+                    SupportsList = runtime.SupportsSessionList,
                     AuthenticationMethods = runtime.AuthenticationMethods.ToList()
                 };
             }
@@ -84,9 +88,157 @@ internal sealed class AgentSessionManager : IAsyncDisposable
             {
                 SessionId = sessionId,
                 AgentName = installed.Name,
+                WorkingDirectory = workingDirectory,
+                SupportsLoad = runtime.SupportsSessionLoad,
+                SupportsResume = runtime.SupportsSessionResume,
+                SupportsList = runtime.SupportsSessionList,
                 AuthenticationMethods = runtime.AuthenticationMethods.ToList(),
                 ConfigOptions = configOptions
             };
+        }
+        finally
+        {
+            _runtimeGate.Release();
+        }
+    }
+
+    public async Task<SessionResumeResponse> ResumeAsync(SessionResumeRequest request, PipePeer client, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.AgentId)
+            || string.IsNullOrWhiteSpace(request.HostId)
+            || string.IsNullOrWhiteSpace(request.SessionId))
+        {
+            throw new ArgumentException("An agent, Office host, and saved ACP session are required.");
+        }
+
+        var installed = await _store.FindAsync(request.AgentId, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException($"ACP agent '{request.AgentId}' is not installed.");
+        await _runtimeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            var runtime = _runtimes.GetOrAdd(installed.Id, _ => CreateRuntime(installed));
+            await runtime.InitializeAsync(cancellationToken).ConfigureAwait(false);
+            var workingDirectory = ValidateSessionDirectory(request.WorkingDirectory);
+            _hosts.Get(request.HostId);
+            var method = runtime.SupportsSessionResume
+                ? "session/resume"
+                : runtime.SupportsSessionLoad ? "session/load" : null;
+            if (method == null)
+            {
+                return ResumeResponse(runtime, installed, request, workingDirectory, false, "unsupported",
+                    "This ACP agent does not support restoring previous sessions.", []);
+            }
+
+            var context = new SessionContext(request.SessionId, request.HostId, client, runtime)
+            {
+                SuppressUpdates = string.Equals(method, "session/load", StringComparison.Ordinal)
+            };
+            if (!_sessions.TryAdd(request.SessionId, context))
+            {
+                return ResumeResponse(runtime, installed, request, workingDirectory, false, "already_active",
+                    "The saved ACP session is already active.", []);
+            }
+
+            try
+            {
+                var result = await runtime.Connection.RequestAsync(method, new
+                {
+                    sessionId = request.SessionId,
+                    cwd = workingDirectory,
+                    mcpServers = new[]
+                    {
+                        new
+                        {
+                            name = "ribbon-office",
+                            command = Environment.ProcessPath ?? throw new InvalidOperationException("Unable to locate Ribbon.Broker.exe."),
+                            args = new[] { "--mcp-stdio", "--host-id", request.HostId },
+                            env = Array.Empty<object>()
+                        }
+                    }
+                }, cancellationToken).ConfigureAwait(false);
+                var configOptions = result.ValueKind == JsonValueKind.Object ? AcpSessionConfig.Parse(result) : [];
+                if (configOptions.Count == 0) configOptions = context.GetConfigOptions().ToList();
+                context.ReplaceConfigOptions(configOptions);
+                context.SuppressUpdates = false;
+                return ResumeResponse(runtime, installed, request, workingDirectory, true,
+                    string.Equals(method, "session/load", StringComparison.Ordinal) ? "loaded" : "resumed",
+                    null, configOptions);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                _sessions.TryRemove(new KeyValuePair<string, SessionContext>(request.SessionId, context));
+                context.PendingPermissions.CancelAll();
+                throw;
+            }
+            catch (Exception exception)
+            {
+                _sessions.TryRemove(new KeyValuePair<string, SessionContext>(request.SessionId, context));
+                context.PendingPermissions.CancelAll();
+                _log.Error($"Agent {installed.Id} could not restore ACP session {request.SessionId}.", exception);
+                return ResumeResponse(runtime, installed, request, workingDirectory, false, "unavailable",
+                    exception.GetBaseException().Message, []);
+            }
+        }
+        finally
+        {
+            _runtimeGate.Release();
+        }
+    }
+
+    public async Task<AgentSessionListResponse> ListSessionsAsync(AgentSessionListRequest request, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.AgentId)) throw new ArgumentException("An ACP agent is required.");
+        var installed = await _store.FindAsync(request.AgentId, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException($"ACP agent '{request.AgentId}' is not installed.");
+        await _runtimeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            var runtime = _runtimes.GetOrAdd(installed.Id, _ => CreateRuntime(installed));
+            await runtime.InitializeAsync(cancellationToken).ConfigureAwait(false);
+            if (!runtime.SupportsSessionList)
+            {
+                return new AgentSessionListResponse { Supported = false, Complete = false, Sessions = [] };
+            }
+
+            var workingDirectory = string.IsNullOrWhiteSpace(request.WorkingDirectory)
+                ? null
+                : ValidateSessionDirectory(request.WorkingDirectory);
+            var sessions = new List<AgentSessionSummary>();
+            var seenCursors = new HashSet<string>(StringComparer.Ordinal);
+            var complete = false;
+            string? cursor = null;
+            for (var page = 0; page < 100; page++)
+            {
+                var parameters = new Dictionary<string, object?>();
+                if (workingDirectory != null) parameters["cwd"] = workingDirectory;
+                if (cursor != null) parameters["cursor"] = cursor;
+                var result = await runtime.Connection.RequestAsync("session/list", parameters, cancellationToken).ConfigureAwait(false);
+                if (result.TryGetProperty("sessions", out var items) && items.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in items.EnumerateArray())
+                    {
+                        var id = OptionalString(item, "sessionId");
+                        if (string.IsNullOrWhiteSpace(id)) continue;
+                        sessions.Add(new AgentSessionSummary
+                        {
+                            SessionId = id,
+                            WorkingDirectory = OptionalString(item, "cwd"),
+                            Title = OptionalString(item, "title"),
+                            UpdatedAt = OptionalString(item, "updatedAt")
+                        });
+                    }
+                }
+                cursor = OptionalString(result, "nextCursor");
+                if (string.IsNullOrWhiteSpace(cursor))
+                {
+                    complete = true;
+                    break;
+                }
+                if (!seenCursors.Add(cursor)) break;
+            }
+            return new AgentSessionListResponse { Supported = true, Complete = complete, Sessions = sessions };
         }
         finally
         {
@@ -303,7 +455,10 @@ internal sealed class AgentSessionManager : IAsyncDisposable
         {
             session.HydrateToolCall(message);
         }
-        await SendUpdateAsync(session, message, cancellationToken).ConfigureAwait(false);
+        if (!session.SuppressUpdates)
+        {
+            await SendUpdateAsync(session, message, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     internal static SessionUpdateMessage ParseSessionUpdate(string sessionId, JsonElement update)
@@ -344,6 +499,11 @@ internal sealed class AgentSessionManager : IAsyncDisposable
                 Priority = entry.TryGetProperty("priority", out var priority) ? priority.GetString() : null,
                 Status = entry.TryGetProperty("status", out var entryStatus) ? entryStatus.GetString() : null
             }).ToList();
+        }
+        else if (kind == "session_info_update")
+        {
+            message.Title = OptionalString(update, "title");
+            message.UpdatedAt = OptionalString(update, "updatedAt");
         }
 
         return message;
@@ -407,6 +567,57 @@ internal sealed class AgentSessionManager : IAsyncDisposable
             .ToString();
         File.WriteAllText(Path.Combine(root, "AGENTS.md"), guidance);
         return root;
+    }
+
+    private string ValidateSessionDirectory(string workingDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(workingDirectory))
+        {
+            throw new InvalidOperationException("The saved conversation does not contain its ACP working directory.");
+        }
+        var root = Path.GetFullPath(_paths.Sessions).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        var path = Path.GetFullPath(workingDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (!path.StartsWith(root, StringComparison.OrdinalIgnoreCase) || !Directory.Exists(path))
+        {
+            throw new InvalidOperationException("The saved ACP working directory is unavailable or outside Ribbon's session storage.");
+        }
+        var rootPath = root.TrimEnd(Path.DirectorySeparatorChar);
+        for (var current = new DirectoryInfo(path); current != null; current = current.Parent)
+        {
+            if ((current.Attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                throw new InvalidOperationException("The saved ACP working directory cannot traverse a symbolic link or junction.");
+            }
+            if (string.Equals(current.FullName.TrimEnd(Path.DirectorySeparatorChar), rootPath, StringComparison.OrdinalIgnoreCase)) break;
+        }
+        return path;
+    }
+
+    private static SessionResumeResponse ResumeResponse(
+        AgentRuntime runtime,
+        InstalledAgentRecord installed,
+        SessionResumeRequest request,
+        string workingDirectory,
+        bool resumed,
+        string kind,
+        string? error,
+        IList<SessionConfigOption> configOptions)
+    {
+        return new SessionResumeResponse
+        {
+            Resumed = resumed,
+            ResumeKind = kind,
+            Error = error,
+            SessionId = resumed ? request.SessionId : string.Empty,
+            AgentName = installed.Name,
+            WorkingDirectory = workingDirectory,
+            SupportsLoad = runtime.SupportsSessionLoad,
+            SupportsResume = runtime.SupportsSessionResume,
+            SupportsList = runtime.SupportsSessionList,
+            AuthenticationMethods = runtime.AuthenticationMethods.ToList(),
+            ConfigOptions = configOptions
+        };
     }
 
     private SessionContext GetSession(string sessionId)
@@ -491,6 +702,15 @@ internal sealed class AgentSessionManager : IAsyncDisposable
         return text.ToString();
     }
 
+    private static string OptionalString(JsonElement element, string propertyName)
+    {
+        return element.ValueKind == JsonValueKind.Object
+            && element.TryGetProperty(propertyName, out var property)
+            && property.ValueKind == JsonValueKind.String
+                ? property.GetString() ?? string.Empty
+                : string.Empty;
+    }
+
     private static string Sanitize(string value)
     {
         return string.Concat((value ?? string.Empty).Select(character => char.IsLetterOrDigit(character) || character == '-' ? character : '_'));
@@ -521,6 +741,7 @@ internal sealed class AgentSessionManager : IAsyncDisposable
         public PipePeer Client { get; }
         public AgentRuntime Runtime { get; }
         public PendingPermissionRegistry PendingPermissions { get; } = new();
+        public bool SuppressUpdates { get; set; }
 
         public IReadOnlyList<SessionConfigOption> GetConfigOptions()
         {
@@ -663,6 +884,9 @@ internal sealed class AgentRuntime : IAsyncDisposable
     public AcpProcessConnection Connection { get; }
     public IReadOnlyList<AgentAuthenticationMethod> AuthenticationMethods { get; private set; } = Array.Empty<AgentAuthenticationMethod>();
     public bool SupportsSessionClose { get; private set; }
+    public bool SupportsSessionLoad { get; private set; }
+    public bool SupportsSessionResume { get; private set; }
+    public bool SupportsSessionList { get; private set; }
 
     public async Task InitializeAsync(CancellationToken cancellationToken)
     {
@@ -695,6 +919,9 @@ internal sealed class AgentRuntime : IAsyncDisposable
                 }).ToList()
                 : Array.Empty<AgentAuthenticationMethod>();
             SupportsSessionClose = SupportsSessionCloseCapability(result);
+            SupportsSessionLoad = SupportsSessionLoadCapability(result);
+            SupportsSessionResume = SupportsSessionCapability(result, "resume");
+            SupportsSessionList = SupportsSessionCapability(result, "list");
             _initialized = true;
         }
         finally
@@ -705,12 +932,25 @@ internal sealed class AgentRuntime : IAsyncDisposable
 
     internal static bool SupportsSessionCloseCapability(JsonElement initializeResult)
     {
+        return SupportsSessionCapability(initializeResult, "close");
+    }
+
+    internal static bool SupportsSessionLoadCapability(JsonElement initializeResult)
+    {
+        return initializeResult.TryGetProperty("agentCapabilities", out var capabilities)
+            && capabilities.ValueKind == JsonValueKind.Object
+            && capabilities.TryGetProperty("loadSession", out var load)
+            && load.ValueKind == JsonValueKind.True;
+    }
+
+    internal static bool SupportsSessionCapability(JsonElement initializeResult, string capabilityName)
+    {
         return initializeResult.TryGetProperty("agentCapabilities", out var capabilities)
             && capabilities.ValueKind == JsonValueKind.Object
             && capabilities.TryGetProperty("sessionCapabilities", out var sessions)
             && sessions.ValueKind == JsonValueKind.Object
-            && sessions.TryGetProperty("close", out var close)
-            && (close.ValueKind == JsonValueKind.Object || close.ValueKind == JsonValueKind.True);
+            && sessions.TryGetProperty(capabilityName, out var capability)
+            && (capability.ValueKind == JsonValueKind.Object || capability.ValueKind == JsonValueKind.True);
     }
 
     public async ValueTask DisposeAsync()

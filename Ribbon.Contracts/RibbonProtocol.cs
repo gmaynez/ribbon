@@ -20,6 +20,8 @@ namespace Ribbon.Contracts
         public const string UninstallAgent = "agents/uninstall";
         public const string AuthenticateAgent = "agents/authenticate";
         public const string StartSession = "session/start";
+        public const string ResumeSession = "session/resume_saved";
+        public const string ListAgentSessions = "session/list_saved";
         public const string PromptSession = "session/prompt";
         public const string CancelSession = "session/cancel";
         public const string CloseSession = "session/close";
@@ -98,6 +100,7 @@ namespace Ribbon.Contracts
         public string HostKind { get; set; }
         public int ProcessId { get; set; }
         public string DisplayName { get; set; }
+        public string DocumentId { get; set; }
         public string DocumentPath { get; set; }
         public string Version { get; set; }
     }
@@ -175,8 +178,56 @@ namespace Ribbon.Contracts
     {
         public string SessionId { get; set; }
         public string AgentName { get; set; }
+        public string WorkingDirectory { get; set; }
+        public bool SupportsLoad { get; set; }
+        public bool SupportsResume { get; set; }
+        public bool SupportsList { get; set; }
         public IList<AgentAuthenticationMethod> AuthenticationMethods { get; set; }
         public IList<SessionConfigOption> ConfigOptions { get; set; }
+    }
+
+    public sealed class SessionResumeRequest
+    {
+        public string AgentId { get; set; }
+        public string HostId { get; set; }
+        public string SessionId { get; set; }
+        public string WorkingDirectory { get; set; }
+    }
+
+    public sealed class SessionResumeResponse
+    {
+        public bool Resumed { get; set; }
+        public string ResumeKind { get; set; }
+        public string Error { get; set; }
+        public string SessionId { get; set; }
+        public string AgentName { get; set; }
+        public string WorkingDirectory { get; set; }
+        public bool SupportsLoad { get; set; }
+        public bool SupportsResume { get; set; }
+        public bool SupportsList { get; set; }
+        public IList<AgentAuthenticationMethod> AuthenticationMethods { get; set; }
+        public IList<SessionConfigOption> ConfigOptions { get; set; }
+    }
+
+    public sealed class AgentSessionListRequest
+    {
+        public string AgentId { get; set; }
+        public string WorkingDirectory { get; set; }
+    }
+
+    public sealed class AgentSessionListResponse
+    {
+        public bool Supported { get; set; }
+        public bool Complete { get; set; }
+        public IList<AgentSessionSummary> Sessions { get; set; }
+    }
+
+    public sealed class AgentSessionSummary
+    {
+        public string SessionId { get; set; }
+        public string WorkingDirectory { get; set; }
+        public string Title { get; set; }
+        public string UpdatedAt { get; set; }
     }
 
     public sealed class SessionPromptRequest
@@ -230,6 +281,8 @@ namespace Ribbon.Contracts
         public string ToolName { get; set; }
         public string ToolKind { get; set; }
         public string Status { get; set; }
+        public string Title { get; set; }
+        public string UpdatedAt { get; set; }
         public string RawJson { get; set; }
         public IList<SessionConfigOption> ConfigOptions { get; set; }
         public IList<SessionPlanEntry> PlanEntries { get; set; }

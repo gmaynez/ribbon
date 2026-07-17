@@ -136,4 +136,48 @@ public sealed class AcpProtocolBehaviorTests
         Assert.True(AgentRuntime.SupportsSessionCloseCapability(supported.RootElement));
         Assert.False(AgentRuntime.SupportsSessionCloseCapability(unsupported.RootElement));
     }
+
+    [Fact]
+    public void ConversationHistoryCapabilitiesAreParsedIndependently()
+    {
+        using var supported = JsonDocument.Parse("""
+            {
+              "agentCapabilities": {
+                "loadSession": true,
+                "sessionCapabilities": {
+                  "resume": {},
+                  "list": {}
+                }
+              }
+            }
+            """);
+        using var unsupported = JsonDocument.Parse("""
+            { "agentCapabilities": { "loadSession": false, "sessionCapabilities": {} } }
+            """);
+
+        Assert.True(AgentRuntime.SupportsSessionLoadCapability(supported.RootElement));
+        Assert.True(AgentRuntime.SupportsSessionCapability(supported.RootElement, "resume"));
+        Assert.True(AgentRuntime.SupportsSessionCapability(supported.RootElement, "list"));
+        Assert.False(AgentRuntime.SupportsSessionLoadCapability(unsupported.RootElement));
+        Assert.False(AgentRuntime.SupportsSessionCapability(unsupported.RootElement, "resume"));
+        Assert.False(AgentRuntime.SupportsSessionCapability(unsupported.RootElement, "list"));
+    }
+
+    [Fact]
+    public void SessionInfoUpdatesExposeGeneratedConversationMetadata()
+    {
+        using var document = JsonDocument.Parse("""
+            {
+              "sessionUpdate": "session_info_update",
+              "title": "Build the quarterly forecast",
+              "updatedAt": "2026-07-16T18:42:00Z"
+            }
+            """);
+
+        var update = AgentSessionManager.ParseSessionUpdate("session-1", document.RootElement);
+
+        Assert.Equal("session_info_update", update.UpdateKind);
+        Assert.Equal("Build the quarterly forecast", update.Title);
+        Assert.Equal("2026-07-16T18:42:00Z", update.UpdatedAt);
+    }
 }

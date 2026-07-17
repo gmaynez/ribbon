@@ -16,6 +16,8 @@ namespace Ribbon.Vsto
         private readonly RibbonComboBox _models;
         private readonly RibbonComboBox _checkpoints;
         private readonly RibbonButton _manage;
+        private readonly RibbonButton _newConversation;
+        private readonly RibbonButton _history;
         private readonly RibbonButton _restoreCheckpoint;
         private readonly RichTextBox _transcript;
         private readonly TextBox _prompt;
@@ -25,6 +27,7 @@ namespace Ribbon.Vsto
         private readonly RibbonStatusDot _statusDot;
         private readonly Label _promptPlaceholder;
         private readonly ToolTip _toolTip;
+        private readonly Timer _historySaveTimer;
         private readonly string _hostKind;
         private readonly string _productName;
         private Font _transcriptRegularFont;
@@ -32,14 +35,21 @@ namespace Ribbon.Vsto
         private Font _transcriptItalicFont;
         private readonly Dictionary<string, string> _toolStatuses = new Dictionary<string, string>(StringComparer.Ordinal);
         private readonly List<DocumentCheckpoint> _checkpointItems = new List<DocumentCheckpoint>();
+        private ConversationRecord _currentConversation;
         private string _sessionId;
         private string _sessionAgentId;
+        private string _sessionWorkingDirectory;
+        private bool _sessionSupportsLoad;
+        private bool _sessionSupportsResume;
+        private bool _sessionSupportsList;
         private string _sessionStartAgentId;
         private string _modelConfigId;
         private Task _sessionStartTask;
         private IList<SessionConfigOption> _sessionConfigOptions = new List<SessionConfigOption>();
         private bool _loaded;
         private bool _hasConversation;
+        private bool _historyReadOnly;
+        private bool _suppressHistoryCapture;
         private bool _suppressAgentSelection;
         private bool _suppressModelSelection;
         private bool _modelAvailable;
@@ -59,6 +69,8 @@ namespace Ribbon.Vsto
             _models = new RibbonComboBox(_palette);
             _checkpoints = new RibbonComboBox(_palette);
             _manage = new RibbonButton(_palette, RibbonButtonKind.Secondary) { Text = "Agents", Glyph = RibbonGlyph.Agents, Width = 88 };
+            _newConversation = new RibbonButton(_palette, RibbonButtonKind.Ghost) { Text = "New", Width = 60, Height = 26, MinimumSize = new Size(56, 26) };
+            _history = new RibbonButton(_palette, RibbonButtonKind.Ghost) { Text = "History", Width = 72, Height = 26, MinimumSize = new Size(68, 26) };
             _restoreCheckpoint = new RibbonButton(_palette, RibbonButtonKind.Secondary) { Text = "Restore", Width = 78 };
             _transcript = new RichTextBox();
             _prompt = new TextBox();
@@ -68,6 +80,12 @@ namespace Ribbon.Vsto
             _statusDot = new RibbonStatusDot { DotColor = _palette.MutedText };
             _promptPlaceholder = new Label();
             _toolTip = new ToolTip { InitialDelay = 450, ReshowDelay = 100, AutoPopDelay = 8000 };
+            _historySaveTimer = new Timer { Interval = 700 };
+            _historySaveTimer.Tick += (sender, args) =>
+            {
+                _historySaveTimer.Stop();
+                PersistCurrentConversation();
+            };
 
             Dock = DockStyle.Fill;
             AutoScaleMode = AutoScaleMode.Dpi;
@@ -94,6 +112,9 @@ namespace Ribbon.Vsto
             if (disposing)
             {
                 _runtime.SessionUpdate -= RuntimeOnSessionUpdate;
+                _historySaveTimer.Stop();
+                PersistCurrentConversation();
+                _historySaveTimer.Dispose();
                 _transcriptBoldFont?.Dispose();
                 _transcriptRegularFont?.Dispose();
                 _transcriptItalicFont?.Dispose();
@@ -223,10 +244,10 @@ namespace Ribbon.Vsto
         {
             var surface = new RibbonSurface(_palette) { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 10), Padding = new Padding(12, 9, 12, 12) };
             var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, BackColor = _palette.Surface };
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
-            layout.Controls.Add(LabelFor("CONVERSATION", 7.5f, FontStyle.Bold, _palette.MutedText), 0, 0);
+            layout.Controls.Add(BuildConversationHeader(), 0, 0);
             _transcript.Dock = DockStyle.Fill;
             _transcript.ReadOnly = true;
             _transcript.BorderStyle = BorderStyle.None;
@@ -243,6 +264,28 @@ namespace Ribbon.Vsto
             layout.Controls.Add(BuildCheckpointBar(), 0, 2);
             surface.Controls.Add(layout);
             return surface;
+        }
+
+        private Control BuildConversationHeader()
+        {
+            var header = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, BackColor = _palette.Surface, Margin = new Padding(0) };
+            header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 64));
+            header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 76));
+            header.Controls.Add(LabelFor("CONVERSATION", 7.5f, FontStyle.Bold, _palette.MutedText), 0, 0);
+            _newConversation.Dock = DockStyle.Fill;
+            _newConversation.Margin = new Padding(2, 0, 2, 0);
+            _newConversation.Click += async (sender, args) => await NewConversationAsync();
+            _newConversation.AccessibleName = "Start a new Ribbon conversation";
+            _history.Dock = DockStyle.Fill;
+            _history.Margin = new Padding(2, 0, 0, 0);
+            _history.Click += async (sender, args) => await ShowHistoryAsync();
+            _history.AccessibleName = "Open Ribbon conversation history";
+            _toolTip.SetToolTip(_newConversation, "Save this chat and start a fresh agent conversation.");
+            _toolTip.SetToolTip(_history, "Browse saved Ribbon conversations.");
+            header.Controls.Add(_newConversation, 1, 0);
+            header.Controls.Add(_history, 2, 0);
+            return header;
         }
 
         private Control BuildCheckpointBar()
@@ -410,10 +453,11 @@ namespace Ribbon.Vsto
         {
             if (_suppressAgentSelection) return;
             var previousSessionId = _sessionId;
-            _sessionId = null;
-            _sessionAgentId = null;
-            _sessionConfigOptions = new List<SessionConfigOption>();
-            _runtime.ClearActiveSession();
+            PersistCurrentConversation();
+            _currentConversation = null;
+            ResetSessionState();
+            _historyReadOnly = false;
+            ShowWelcomeMessage();
             ShowModelPlaceholder(GetSelectedAgent() == null ? "Select an agent" : "Loading models…");
             try
             {
@@ -483,7 +527,12 @@ namespace Ribbon.Vsto
             {
                 _sessionId = session.SessionId;
                 _sessionAgentId = agent.Id;
+                _sessionWorkingDirectory = session.WorkingDirectory;
+                _sessionSupportsLoad = session.SupportsLoad;
+                _sessionSupportsResume = session.SupportsResume;
+                _sessionSupportsList = session.SupportsList;
                 ApplyConfigOptions(session.ConfigOptions);
+                UpdateConversationSession(session.SessionId, session.WorkingDirectory, session.SupportsLoad, session.SupportsResume, session.SupportsList);
             }
         }
 
@@ -503,6 +552,11 @@ namespace Ribbon.Vsto
                 SetStatus("Switching to " + selected.Name + "…", _palette.Accent);
                 var response = await _runtime.SetSessionConfigOptionAsync(_sessionId, _modelConfigId, selected.Value);
                 ApplyConfigOptions(response.ConfigOptions);
+                if (_currentConversation != null)
+                {
+                    _currentConversation.ModelName = selected.Name ?? selected.Value;
+                    ScheduleConversationSave();
+                }
                 SetStatus(selected.Name, _palette.Success);
             }
             catch (Exception exception)
@@ -588,23 +642,43 @@ namespace Ribbon.Vsto
             var text = _prompt.Text.Trim();
             var agent = GetSelectedAgent();
             if (text.Length == 0) return;
+            if (_historyReadOnly)
+            {
+                MessageBox.Show(this, "This conversation belongs to another document and is open read-only. Start a new chat to continue in the current document.",
+                    "Ribbon history", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
             if (agent == null)
             {
                 MessageBox.Show(this, "Install and select an ACP agent first.", "Ribbon", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
+            if (_currentConversation != null
+                && !ConversationHistoryStorage.MatchesCurrentDocument(_currentConversation, _runtime.Registration))
+            {
+                var answer = MessageBox.Show(this,
+                    "The active " + RibbonProductIdentity.GetDocumentNoun(_hostKind) + " has changed since this conversation began.\r\n\r\nStart a new conversation for the active document?",
+                    "Ribbon document changed", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button1);
+                if (answer != DialogResult.Yes) return;
+                await NewConversationAsync();
+                agent = GetSelectedAgent();
+                if (agent == null) return;
+            }
 
             SetBusy(true);
+            EnsureConversationRecord(agent, text);
             AppendTurn(text, agent.Name ?? "Agent");
             _prompt.Clear();
             try
             {
                 await EnsureSessionAsync(agent);
                 if (string.IsNullOrWhiteSpace(_sessionId)) throw new InvalidOperationException("The ACP agent did not create a session.");
+                UpdateConversationSession(_sessionId, _sessionWorkingDirectory, _sessionSupportsLoad, _sessionSupportsResume, _sessionSupportsList);
                 SetStatus("Creating document checkpoint…", _palette.Accent);
                 var checkpoint = await _runtime.CreateCheckpointAsync(CheckpointLabel(text));
                 AddCheckpoint(checkpoint);
                 await _runtime.PromptAsync(_sessionId, text);
+                PersistCurrentConversation();
                 SetStatus("Ready", _palette.Success);
             }
             catch (Exception exception)
@@ -657,15 +731,13 @@ namespace Ribbon.Vsto
                 AddCheckpoint(safety);
 
                 var previousSessionId = _sessionId;
-                _sessionId = null;
-                _sessionAgentId = null;
-                _sessionConfigOptions = new List<SessionConfigOption>();
-                _runtime.ClearActiveSession();
+                ResetSessionState();
                 if (!string.IsNullOrWhiteSpace(previousSessionId)) await _runtime.CloseSessionAsync(previousSessionId);
                 ShowModelPlaceholder("Restarting agent session…");
                 AppendTranscript(Environment.NewLine + Environment.NewLine + "Checkpoint restored\n", _palette.Success, FontStyle.Bold);
                 AppendTranscript("The document is back at " + selected.DisplayName + ". A fresh agent session will be used for the next turn.\n", _palette.MutedText, FontStyle.Regular);
                 await EnsureSelectedSessionAsync();
+                PersistCurrentConversation();
                 SetStatus("Checkpoint restored", _palette.Success);
             }
             catch (Exception exception)
@@ -751,9 +823,18 @@ namespace Ribbon.Vsto
             {
                 ApplyConfigOptions(update.ConfigOptions);
             }
+            else if (update.UpdateKind == "session_info_update")
+            {
+                if (_currentConversation != null && !string.IsNullOrWhiteSpace(update.Title))
+                {
+                    _currentConversation.Title = ConversationHistoryStorage.NormalizeTitle(update.Title);
+                    ScheduleConversationSave();
+                }
+            }
             else if (update.UpdateKind == "turn_complete")
             {
                 AppendTranscript(Environment.NewLine + Environment.NewLine, _palette.Text, FontStyle.Regular);
+                PersistCurrentConversation();
             }
         }
 
@@ -797,11 +878,14 @@ namespace Ribbon.Vsto
             RibbonUiThread.Run(this, () =>
             {
                 _busy = busy;
-                _send.Enabled = !busy;
+                _send.Enabled = !busy && !_historyReadOnly;
                 _cancel.Enabled = busy;
-                _agents.Enabled = !busy;
-                _models.Enabled = !busy && _modelAvailable;
+                _prompt.Enabled = !busy && !_historyReadOnly;
+                _agents.Enabled = !busy && !_historyReadOnly;
+                _models.Enabled = !busy && !_historyReadOnly && _modelAvailable;
                 _manage.Enabled = !busy;
+                _newConversation.Enabled = !busy;
+                _history.Enabled = !busy;
                 _checkpoints.Enabled = !busy && _checkpointItems.Count > 0;
                 _restoreCheckpoint.Enabled = !busy && _checkpointItems.Count > 0;
                 if (busy) SetStatusCore("Agent is working…", _palette.Accent);
@@ -818,6 +902,315 @@ namespace Ribbon.Vsto
         private void SetModelEnabled(bool enabled)
         {
             RibbonUiThread.Run(this, () => _models.Enabled = enabled);
+        }
+
+        private async Task NewConversationAsync()
+        {
+            if (_busy) return;
+            SetBusy(true);
+            try
+            {
+                PersistCurrentConversation();
+                var previousSessionId = _sessionId;
+                _currentConversation = null;
+                _historyReadOnly = false;
+                ResetSessionState();
+                if (!string.IsNullOrWhiteSpace(previousSessionId)) await _runtime.CloseSessionAsync(previousSessionId);
+                ShowWelcomeMessage();
+                ShowModelPlaceholder(GetSelectedAgent() == null ? "Select an agent" : "Starting fresh session…");
+                await EnsureSelectedSessionAsync();
+                SetStatus("New conversation", _palette.Success);
+            }
+            catch (Exception exception)
+            {
+                ShowError(exception);
+            }
+            finally
+            {
+                SetBusy(false);
+            }
+        }
+
+        private async Task ShowHistoryAsync()
+        {
+            if (_busy) return;
+            PersistCurrentConversation();
+            ConversationRecord selected;
+            using (var dialog = new ConversationHistoryDialog(_runtime.Registration, _palette))
+            {
+                if (dialog.ShowDialog(this) != DialogResult.OK) return;
+                selected = dialog.SelectedConversation;
+            }
+            if (selected != null) await OpenConversationAsync(selected);
+        }
+
+        private async Task OpenConversationAsync(ConversationRecord record)
+        {
+            if (record == null || _busy) return;
+            if (_currentConversation != null && string.Equals(_currentConversation.Id, record.Id, StringComparison.OrdinalIgnoreCase))
+            {
+                SetStatus("Conversation is already open", _palette.Success);
+                return;
+            }
+
+            SetBusy(true);
+            try
+            {
+                PersistCurrentConversation();
+                var previousSessionId = _sessionId;
+                _currentConversation = null;
+                ResetSessionState();
+                if (!string.IsNullOrWhiteSpace(previousSessionId)) await _runtime.CloseSessionAsync(previousSessionId);
+
+                RenderConversation(record);
+                var agent = SelectAgent(record.AgentId);
+                if (!ConversationHistoryStorage.MatchesCurrentDocument(record, _runtime.Registration))
+                {
+                    OpenReadOnlyHistory(record, "This conversation belongs to " + record.DisplayDocument + ". Open that document to continue with its agent context.");
+                    return;
+                }
+
+                if (agent == null)
+                {
+                    OpenReadOnlyHistory(record, "The " + (record.AgentName ?? record.AgentId) + " agent is not installed. The transcript is available read-only.");
+                    return;
+                }
+
+                if (record.MayResumeNatively)
+                {
+                    if (record.SupportsList)
+                    {
+                        try
+                        {
+                            SetStatus("Checking saved agent session…", _palette.Accent);
+                            var listed = await _runtime.ListAgentSessionsAsync(agent.Id, record.AcpWorkingDirectory);
+                            if (listed.Supported)
+                            {
+                                var known = (listed.Sessions ?? new List<AgentSessionSummary>())
+                                    .FirstOrDefault(item => string.Equals(item.SessionId, record.AcpSessionId, StringComparison.Ordinal));
+                                if (known == null && listed.Complete)
+                                {
+                                    await OfferFreshContinuationAsync(record, agent, "The agent no longer lists this saved ACP session.");
+                                    return;
+                                }
+                                if (!string.IsNullOrWhiteSpace(known.Title)) record.Title = ConversationHistoryStorage.NormalizeTitle(known.Title);
+                            }
+                        }
+                        catch
+                        {
+                            // Listing is advisory; a direct capability-gated resume may still succeed.
+                        }
+                    }
+                    SetStatus("Restoring " + agent.Name + " context…", _palette.Accent);
+                    var resume = await _runtime.ResumeSessionAsync(agent.Id, record.AcpSessionId, record.AcpWorkingDirectory);
+                    if (!resume.Resumed && resume.AuthenticationMethods != null && resume.AuthenticationMethods.Count > 0)
+                    {
+                        var method = resume.AuthenticationMethods[0];
+                        SetStatus("Authenticating with " + method.Name + "…", _palette.Accent);
+                        await _runtime.AuthenticateAsync(agent.Id, method.Id);
+                        resume = await _runtime.ResumeSessionAsync(agent.Id, record.AcpSessionId, record.AcpWorkingDirectory);
+                    }
+                    if (resume.Resumed)
+                    {
+                        _currentConversation = record;
+                        _historyReadOnly = false;
+                        _sessionId = resume.SessionId;
+                        _sessionAgentId = agent.Id;
+                        _sessionWorkingDirectory = resume.WorkingDirectory;
+                        _sessionSupportsLoad = resume.SupportsLoad;
+                        _sessionSupportsResume = resume.SupportsResume;
+                        _sessionSupportsList = resume.SupportsList;
+                        ApplyConfigOptions(resume.ConfigOptions);
+                        UpdateConversationSession(resume.SessionId, resume.WorkingDirectory, resume.SupportsLoad, resume.SupportsResume, resume.SupportsList);
+                        SetStatus(resume.ResumeKind == "loaded" ? "Conversation loaded" : "Conversation resumed", _palette.Success);
+                        return;
+                    }
+                    await OfferFreshContinuationAsync(record, agent, resume.Error);
+                    return;
+                }
+
+                await OfferFreshContinuationAsync(record, agent, "This agent did not advertise ACP session load or resume support when the conversation was saved.");
+            }
+            catch (Exception exception)
+            {
+                OpenReadOnlyHistory(record, exception.GetBaseException().Message);
+            }
+            finally
+            {
+                SetBusy(false);
+            }
+        }
+
+        private async Task OfferFreshContinuationAsync(ConversationRecord source, AgentSummary agent, string reason)
+        {
+            var answer = MessageBox.Show(this,
+                (string.IsNullOrWhiteSpace(reason) ? "The agent could not restore its previous ACP context." : reason)
+                    + "\r\n\r\nContinue in a fresh agent session? The previous transcript will remain visible, but the agent will not remember it unless you summarize the relevant details in your next prompt.",
+                "Continue Ribbon conversation", MessageBoxButtons.YesNo, MessageBoxIcon.Information, MessageBoxDefaultButton.Button2);
+            if (answer != DialogResult.Yes)
+            {
+                OpenReadOnlyHistory(source, "Saved transcript · agent context was not resumed");
+                return;
+            }
+
+            var continuation = ConversationHistoryStorage.Create(_runtime.Registration, agent, source.DisplayTitle + " · continued");
+            continuation.ContinuedFromId = source.Id;
+            continuation.Entries = (source.Entries ?? new List<ConversationTranscriptEntry>()).Select(entry => new ConversationTranscriptEntry
+            {
+                Text = entry.Text,
+                Tone = entry.Tone,
+                Style = entry.Style
+            }).ToList();
+            _currentConversation = continuation;
+            _historyReadOnly = false;
+            RenderConversation(continuation);
+            ShowModelPlaceholder("Starting fresh session…");
+            await EnsureSessionAsync(agent);
+            AppendTranscript(Environment.NewLine + Environment.NewLine + "Fresh agent context\n", _palette.Accent, FontStyle.Bold);
+            AppendTranscript("The saved transcript is shown above, but this agent session cannot see its earlier messages. Include any needed context in your next prompt.\n",
+                _palette.MutedText, FontStyle.Regular);
+            PersistCurrentConversation();
+            SetStatus("Fresh continuation ready", _palette.Success);
+        }
+
+        private void OpenReadOnlyHistory(ConversationRecord record, string status)
+        {
+            _currentConversation = null;
+            _historyReadOnly = true;
+            RenderConversation(record);
+            ShowModelPlaceholder("Read-only history");
+            SetStatus(status, _palette.MutedText);
+        }
+
+        private AgentSummary SelectAgent(string agentId)
+        {
+            var agent = _agents.Items.Cast<AgentSummary>()
+                .FirstOrDefault(item => string.Equals(item.Id, agentId, StringComparison.OrdinalIgnoreCase));
+            if (agent == null) return null;
+            _suppressAgentSelection = true;
+            try { _agents.SelectedItem = agent; }
+            finally { _suppressAgentSelection = false; }
+            return agent;
+        }
+
+        private void ResetSessionState()
+        {
+            _sessionId = null;
+            _sessionAgentId = null;
+            _sessionWorkingDirectory = null;
+            _sessionSupportsLoad = false;
+            _sessionSupportsResume = false;
+            _sessionSupportsList = false;
+            _sessionConfigOptions = new List<SessionConfigOption>();
+            _runtime.ClearActiveSession();
+        }
+
+        private void EnsureConversationRecord(AgentSummary agent, string firstPrompt)
+        {
+            if (_currentConversation != null) return;
+            _currentConversation = ConversationHistoryStorage.Create(_runtime.Registration, agent, ConversationTitle(firstPrompt));
+            _currentConversation.AcpSessionId = _sessionId ?? string.Empty;
+            _currentConversation.AcpWorkingDirectory = _sessionWorkingDirectory ?? string.Empty;
+            _currentConversation.SupportsLoad = _sessionSupportsLoad;
+            _currentConversation.SupportsResume = _sessionSupportsResume;
+            _currentConversation.SupportsList = _sessionSupportsList;
+        }
+
+        private void UpdateConversationSession(string sessionId, string workingDirectory, bool supportsLoad, bool supportsResume, bool supportsList)
+        {
+            if (_currentConversation == null) return;
+            _currentConversation.AcpSessionId = sessionId ?? string.Empty;
+            _currentConversation.AcpWorkingDirectory = workingDirectory ?? string.Empty;
+            _currentConversation.SupportsLoad = supportsLoad;
+            _currentConversation.SupportsResume = supportsResume;
+            _currentConversation.SupportsList = supportsList;
+            var model = _models.SelectedItem as SessionConfigOptionValue;
+            if (model != null && !string.IsNullOrWhiteSpace(model.Value)) _currentConversation.ModelName = model.Name ?? model.Value;
+            ScheduleConversationSave();
+        }
+
+        private void RenderConversation(ConversationRecord record)
+        {
+            _suppressHistoryCapture = true;
+            try
+            {
+                _transcript.Clear();
+                foreach (var entry in record?.Entries ?? new List<ConversationTranscriptEntry>())
+                {
+                    AppendTranscript(entry.Text ?? string.Empty, ColorForTone(entry.Tone), FontStyleFor(entry.Style));
+                }
+                _hasConversation = record != null && record.Entries != null && record.Entries.Count > 0;
+            }
+            finally
+            {
+                _suppressHistoryCapture = false;
+            }
+        }
+
+        private void ScheduleConversationSave()
+        {
+            if (_suppressHistoryCapture || _currentConversation == null || IsDisposed || Disposing) return;
+            _historySaveTimer.Stop();
+            _historySaveTimer.Start();
+        }
+
+        private void PersistCurrentConversation()
+        {
+            if (_currentConversation == null) return;
+            try
+            {
+                var registration = _runtime.Registration;
+                if (ConversationHistoryStorage.MatchesCurrentDocument(_currentConversation, registration))
+                {
+                    ConversationHistoryStorage.UpdateDocumentBinding(_currentConversation, registration);
+                }
+                ConversationHistoryStorage.Save(_currentConversation);
+            }
+            catch
+            {
+                // History persistence must never interrupt Office shutdown or an active agent turn.
+            }
+        }
+
+        private string ToneFor(Color color)
+        {
+            if (color.ToArgb() == _palette.Accent.ToArgb()) return "accent";
+            if (color.ToArgb() == _palette.Success.ToArgb()) return "success";
+            if (color.ToArgb() == _palette.Danger.ToArgb()) return "danger";
+            if (color.ToArgb() == _palette.MutedText.ToArgb()) return "muted";
+            return "text";
+        }
+
+        private Color ColorForTone(string tone)
+        {
+            switch (tone)
+            {
+                case "accent": return _palette.Accent;
+                case "success": return _palette.Success;
+                case "danger": return _palette.Danger;
+                case "muted": return _palette.MutedText;
+                default: return _palette.Text;
+            }
+        }
+
+        private static string StyleFor(FontStyle style)
+        {
+            return style == FontStyle.Bold ? "bold" : style == FontStyle.Italic ? "italic" : "regular";
+        }
+
+        private static FontStyle FontStyleFor(string style)
+        {
+            return string.Equals(style, "bold", StringComparison.OrdinalIgnoreCase) ? FontStyle.Bold
+                : string.Equals(style, "italic", StringComparison.OrdinalIgnoreCase) ? FontStyle.Italic
+                : FontStyle.Regular;
+        }
+
+        private static string ConversationTitle(string prompt)
+        {
+            var title = string.Join(" ", (prompt ?? string.Empty)
+                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)).Trim();
+            if (title.Length > 68) title = title.Substring(0, 65) + "…";
+            return string.IsNullOrWhiteSpace(title) ? "New Ribbon conversation" : title;
         }
 
         private void ShowWelcomeMessage()
@@ -926,6 +1319,16 @@ namespace Ribbon.Vsto
 
         private void AppendTranscript(string text, Color color, FontStyle style)
         {
+            if (!_suppressHistoryCapture && _currentConversation != null && !string.IsNullOrEmpty(text))
+            {
+                _currentConversation.Entries.Add(new ConversationTranscriptEntry
+                {
+                    Text = text,
+                    Tone = ToneFor(color),
+                    Style = StyleFor(style)
+                });
+                ScheduleConversationSave();
+            }
             _transcript.SelectionStart = _transcript.TextLength;
             _transcript.SelectionLength = 0;
             _transcript.SelectionColor = color;

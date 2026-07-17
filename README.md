@@ -9,6 +9,7 @@ The result is one agent experience across Office without forcing Excel to automa
 - Browse the public ACP Registry from the Office task pane.
 - Install Windows binary and `npx` agent distributions. Ribbon provisions a private Node.js LTS runtime when needed and verifies the official Node archive checksum.
 - Launch ACP v1 agents, authenticate them, create sessions, and render message chunks, plans, thoughts, and tool progress inline while a turn runs.
+- Persist theme-independent conversation transcripts with generated titles, agent/model metadata, document binding, New chat, history browsing, and deletion. Ribbon restores native agent context through capability-gated ACP `session/resume` or `session/load`; unavailable and cross-document conversations remain safely reviewable.
 - Gate every destructive Office MCP tool in Ribbon as well as relaying ACP permission requests, with an option to remember an approval for that action during the active agent session.
 - Capture a local document checkpoint before each prompt and restore an earlier turn from the task pane; Ribbon saves a safety checkpoint first and restarts the agent session after restore.
 - Populate an agent-driven model selector from ACP session configuration options and keep it synchronized when the agent changes configuration.
@@ -126,6 +127,7 @@ Agent state is stored under `%LOCALAPPDATA%\Ribbon`:
 - `agents` — downloaded binary agents
 - `runtimes` — Ribbon-managed runtimes such as Node.js
 - `sessions` — isolated ACP working directories and Office guidance
+- `Conversations` — persistent Ribbon-owned transcript and session metadata, limited to the newest 200 conversations
 - `Checkpoints` — temporary per-host snapshots used by active task panes; removed when that Office host shuts down
 - `cache` — cached ACP Registry document
 - `logs` — broker diagnostics
@@ -141,4 +143,4 @@ Agent state is stored under `%LOCALAPPDATA%\Ribbon`:
 
 ## Scope and next work
 
-This is a working architectural slice, not yet a production installer. The next useful increments are tracked-changes and image/section support for Word, conditional formatting and sorting for Excel, a selectable authentication-method dialog, signed release packaging with a .NET runtime prerequisite or self-contained broker, reconnect/session recovery, and automated integration tests with a fake ACP agent.
+This is a working architectural slice, not yet a production installer. The next useful increments are tracked-changes and image/section support for Word, conditional formatting and sorting for Excel, a selectable authentication-method dialog, signed release packaging with a .NET runtime prerequisite or self-contained broker, and automated integration tests with a fake ACP agent.

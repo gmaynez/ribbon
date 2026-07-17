@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Ribbon.Contracts;
@@ -29,16 +30,47 @@ namespace Quill.Office
             get
             {
                 string path = null;
-                try { path = _application.ActiveDocument?.FullName; } catch { }
+                string documentId = null;
+                try
+                {
+                    var document = _application.ActiveDocument;
+                    path = document?.FullName;
+                    var windowHandle = DocumentWindowHandle(document);
+                    documentId = OfficeDocumentIdentity.Get("word", windowHandle == 0
+                        ? path
+                        : Process.GetCurrentProcess().Id + "|" + windowHandle);
+                }
+                catch { }
                 return new HostRegistration
                 {
                     HostId = _hostId,
                     HostKind = "Word",
                     DisplayName = "Microsoft Word",
                     ProcessId = Process.GetCurrentProcess().Id,
+                    DocumentId = documentId,
                     DocumentPath = path,
                     Version = _application.Version
                 };
+            }
+        }
+
+        private static long DocumentWindowHandle(Word.Document document)
+        {
+            if (document == null) return 0;
+            Word.Windows windows = null;
+            Word.Window window = null;
+            try
+            {
+                windows = document.Windows;
+                if (windows == null || windows.Count == 0) return 0;
+                window = windows[1];
+                return window?.Hwnd ?? 0;
+            }
+            catch { return 0; }
+            finally
+            {
+                if (window != null) Marshal.ReleaseComObject(window);
+                if (windows != null) Marshal.ReleaseComObject(windows);
             }
         }
 

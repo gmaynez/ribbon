@@ -27,6 +27,7 @@ This keeps failure and deployment boundaries aligned with Office while preservin
 10. Before each prompt, the owning VSTO host captures a local checkpoint of the document state that Ribbon tools can mutate.
 11. MCP calls are routed to the VSTO process that owns the selected tool. Destructive definitions require user approval there before execution on that Office application's UI thread.
 12. ACP message chunks, thoughts, plans, tool progress, and configuration updates stream back through the broker to the task pane.
+13. Ribbon persists the structured transcript and document/session metadata locally. Reopening a saved conversation uses ACP `session/list` for advisory discovery and `session/resume` or `session/load` only when the agent advertises the corresponding capability.
 
 The broker pipe uses a small versioned envelope from `Ribbon.Contracts`. Its pipe name is versioned as well, preventing a newly built add-in from silently attaching to an older long-lived broker that cannot provide newly required payloads. Payloads are JSON strings so both .NET Framework 4.8 and modern .NET can share the protocol without sharing a JSON runtime.
 
@@ -66,6 +67,24 @@ Installed-agent records are local and remain available when the Registry is offl
 - User-visible ACP permission requests preserve the agent's `allow_once`, `allow_always`, `reject_once`, and `reject_always` choices and default to denial.
 - MCP write tools are marked destructive and are independently gated in the owning VSTO host; a remembered approval is scoped to one tool action and one active agent session.
 - Checkpoint restore always requires explicit confirmation, captures the current state first, and resets the ACP session after the document changes.
+- Conversation records contain transcript text and session metadata but never permission decisions, authentication credentials, or raw ACP payloads. Saved ACP working directories are accepted only when they remain under Ribbon's per-user session root.
+
+## Conversation history
+
+Ribbon treats its local history as the reliable UI record because ACP agents vary in persistence support. Each conversation is stored as structured text segments under `%LOCALAPPDATA%\Ribbon\Conversations`, so it can be rendered in the current Office light or dark theme rather than persisting theme-specific RTF colors. Records include the agent, selected model, ACP session id and original working directory, timestamps, and the Office document identity. The store uses atomic replacement, ignores damaged entries without blocking Office startup, and retains the newest 200 conversations.
+
+The task pane provides **New** and **History** actions. History defaults to the active document and can optionally show every Ribbon conversation. Saved documents match by normalized path across Office restarts; inside a live Office process, Ribbon hashes the process and owning document-window handle so simultaneous unsaved documents remain distinct and the same document survives Save or Save As. Office's unique in-application name is the conservative fallback when a document has no window. If the active document changes during a chat, Ribbon requires a new conversation before another prompt can run.
+
+Native continuity is capability-gated according to ACP v1:
+
+- `sessionCapabilities.list` allows advisory discovery through paginated `session/list`.
+- `sessionCapabilities.resume` reconnects the known session without replay. Ribbon supplies the original ACP working directory and a new MCP proxy targeting the current Office host.
+- `loadSession` allows `session/load` when resume is unavailable. The broker consumes the required replay while the task pane renders its richer local transcript, then resumes live updates.
+- `session_info_update` refreshes an agent-generated title in Ribbon's local record.
+
+When neither restore method is supported, or the agent no longer knows the session, the transcript opens read-only and the user can explicitly create a fresh continuation. A fresh continuation copies the visible transcript for the user but states that the new agent session cannot see the old context. Conversations belonging to another document always open read-only; Ribbon never silently attaches their ACP context to the active document.
+
+Conversation history and turn checkpoints remain deliberately separate. History persists chat and optional agent context across Office restarts. Checkpoints are temporary snapshots of the current Office process and are removed at host shutdown; reopening a chat does not resurrect old document checkpoints.
 
 ## Turn checkpoints
 

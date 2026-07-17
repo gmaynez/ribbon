@@ -11,7 +11,7 @@ Keep that separation intact. Application-specific COM automation belongs in the 
 - `Ribbon.Contracts` — versioned JSON pipe contracts; targets `netstandard2.0` so both runtimes can consume it.
 - `Ribbon.Broker` — .NET 10 broker, ACP client, Registry installer, session manager, and stdio MCP proxy.
 - `Ribbon.Broker.Tests` — .NET 10 broker tests, including capability-aware MCP instruction composition.
-- `Ribbon.Vsto` — .NET Framework 4.8 pipe client, shared task pane, agent manager, and permission UI.
+- `Ribbon.Vsto` — .NET Framework 4.8 pipe client, shared task pane, conversation history, agent manager, and permission UI. `ConversationHistory.cs` owns persistent records; `ConversationHistoryDialog.cs` owns browsing and deletion.
 - `Grid` — Excel VSTO host and Excel tools.
 - `Quill` — Word VSTO host and Word tools.
 - `Deck` — PowerPoint VSTO host and PowerPoint tools.
@@ -66,6 +66,7 @@ The active PowerPoint tool surface follows the same split:
 15. Treat `powerpoint_format_shape` as a patch. Express geometry in points, keep chart and table payloads bounded to 10,000 data cells, and accept only existing absolute local paths for image insertion.
 16. Compose MCP server instructions from the live tool catalog. Mention only available tool names, preserve preferred-host order, keep a safe no-tools fallback, and test single-host, mixed-host, partial, and unknown-host catalogs.
 17. Create and restore turn checkpoints inside the owning Office process. Restore only the documented Ribbon tool surface, capture a safety checkpoint first, and reset the ACP session after restore so the agent must inspect fresh state.
+18. Keep Ribbon's local conversation record authoritative for display. Gate ACP `session/list`, `session/resume`, and `session/load` by advertised capabilities, reuse only Ribbon-owned session directories, bind continuation to the original Office document, and make cross-document history read-only.
 
 ## Coding guidance
 
@@ -104,6 +105,8 @@ dotnet build Ribbon.Vsto\Ribbon.Vsto.csproj --no-restore
 ```
 
 For changes to routing, verify at least MCP `initialize`, `tools/list`, and `tools/call` through a connected synthetic or real Office host. Do not install a third-party ACP agent merely to run a routine test unless that external state change is explicitly intended.
+
+For conversation-history changes, cover capability combinations for ACP load, resume, and list; metadata title updates; atomic local serialization; current-versus-other-document filtering; multiple unsaved documents in one Office process; fresh-continuation disclosure; narrow task-pane layout; and history-dialog layout. Never use or delete the user's real `%LOCALAPPDATA%\Ribbon\Conversations` data in an automated test.
 
 For Excel tool changes:
 

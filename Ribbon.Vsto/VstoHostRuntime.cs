@@ -77,6 +77,30 @@ namespace Ribbon.Vsto
             return response;
         }
 
+        public async Task<SessionResumeResponse> ResumeSessionAsync(string agentId, string sessionId, string workingDirectory)
+        {
+            await StartAsync().ConfigureAwait(false);
+            var response = await _client.RequestAsync<SessionResumeResponse>(RibbonProtocol.ResumeSession, new SessionResumeRequest
+            {
+                AgentId = agentId,
+                HostId = Registration.HostId,
+                SessionId = sessionId,
+                WorkingDirectory = workingDirectory
+            }, _lifetimeToken).ConfigureAwait(false);
+            if (response.Resumed && !string.IsNullOrWhiteSpace(response.SessionId)) _client.SetActiveSession(response.SessionId);
+            return response;
+        }
+
+        public async Task<AgentSessionListResponse> ListAgentSessionsAsync(string agentId, string workingDirectory)
+        {
+            await StartAsync().ConfigureAwait(false);
+            return await _client.RequestAsync<AgentSessionListResponse>(RibbonProtocol.ListAgentSessions, new AgentSessionListRequest
+            {
+                AgentId = agentId,
+                WorkingDirectory = workingDirectory
+            }, _lifetimeToken).ConfigureAwait(false);
+        }
+
         public void ClearActiveSession()
         {
             _client.SetActiveSession(string.Empty);
