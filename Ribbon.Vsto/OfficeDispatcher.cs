@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows.Forms;
 
 namespace Ribbon.Vsto
 {
@@ -13,6 +14,16 @@ namespace Ribbon.Vsto
         {
             _context = context ?? throw new ArgumentNullException(nameof(context));
             _threadId = Thread.CurrentThread.ManagedThreadId;
+        }
+
+        public static SynchronizationContext CaptureCurrentContext()
+        {
+            var context = SynchronizationContext.Current;
+            if (context != null) return context;
+
+            context = new WindowsFormsSynchronizationContext();
+            SynchronizationContext.SetSynchronizationContext(context);
+            return context;
         }
 
         public Task<T> RunAsync<T>(Func<T> action, CancellationToken cancellationToken)

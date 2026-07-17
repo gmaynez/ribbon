@@ -790,8 +790,11 @@ namespace Ribbon.Vsto
                 ResetSessionState();
                 if (!string.IsNullOrWhiteSpace(previousSessionId)) await _runtime.CloseSessionAsync(previousSessionId);
                 ShowModelPlaceholder("Restarting agent session…");
-                AppendTranscript(Environment.NewLine + Environment.NewLine + "Checkpoint restored\n", _palette.Success, FontStyle.Bold);
-                AppendTranscript("The document is back at " + selected.DisplayName + ". A fresh agent session will be used for the next turn.\n", _palette.MutedText, FontStyle.Regular);
+                RibbonUiThread.Run(this, () =>
+                {
+                    AppendTranscript(Environment.NewLine + Environment.NewLine + "Checkpoint restored\n", _palette.Success, FontStyle.Bold);
+                    AppendTranscript("The document is back at " + selected.DisplayName + ". A fresh agent session will be used for the next turn.\n", _palette.MutedText, FontStyle.Regular);
+                });
                 await EnsureSelectedSessionAsync();
                 PersistCurrentConversation();
                 SetStatus("Checkpoint restored", _palette.Success);
@@ -1180,9 +1183,12 @@ namespace Ribbon.Vsto
             _currentConversation.SupportsLoad = supportsLoad;
             _currentConversation.SupportsResume = supportsResume;
             _currentConversation.SupportsList = supportsList;
-            var model = _models.SelectedItem as SessionConfigOptionValue;
-            if (model != null && !string.IsNullOrWhiteSpace(model.Value)) _currentConversation.ModelName = model.Name ?? model.Value;
-            ScheduleConversationSave();
+            RibbonUiThread.Run(this, () =>
+            {
+                var model = _models.SelectedItem as SessionConfigOptionValue;
+                if (model != null && !string.IsNullOrWhiteSpace(model.Value)) _currentConversation.ModelName = model.Name ?? model.Value;
+                ScheduleConversationSave();
+            });
         }
 
         private void RenderConversation(ConversationRecord record)

@@ -21,9 +21,7 @@ namespace Grid
 
         private void ThisAddIn_Startup(object sender, System.EventArgs e)
         {
-            SynchronizationContext synchronizationContext;
-
-            synchronizationContext = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+            var synchronizationContext = Ribbon.Vsto.OfficeDispatcher.CaptureCurrentContext();
             _runtime = new VstoHostRuntime(new GridOfficeHost(this.Application, synchronizationContext), synchronizationContext);
 
             _sidebarControl = new RibbonSidebarControl(_runtime);

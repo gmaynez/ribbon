@@ -21,7 +21,7 @@ namespace Quill
 
         private void ThisAddIn_Startup(object sender, System.EventArgs e)
         {
-            var context = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+            var context = Ribbon.Vsto.OfficeDispatcher.CaptureCurrentContext();
             _runtime = new VstoHostRuntime(new QuillOfficeHost(this.Application, context), context);
             _sidebarControl = new RibbonSidebarControl(_runtime);
             _sidebarPane = this.CustomTaskPanes.Add(_sidebarControl, RibbonProductIdentity.GetTaskPaneTitle("Word"));
