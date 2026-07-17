@@ -30,6 +30,13 @@ namespace Ribbon.Vsto
         private readonly Timer _historySaveTimer;
         private readonly string _hostKind;
         private readonly string _productName;
+        private TableLayoutPanel _rootLayout;
+        private TableLayoutPanel _agentRow;
+        private TableLayoutPanel _conversationHeader;
+        private TableLayoutPanel _checkpointBar;
+        private TableLayoutPanel _footer;
+        private Label _checkpointLabel;
+        private Label _composerHint;
         private Font _transcriptRegularFont;
         private Font _transcriptBoldFont;
         private Font _transcriptItalicFont;
@@ -68,6 +75,9 @@ namespace Ribbon.Vsto
             _agents = new RibbonComboBox(_palette);
             _models = new RibbonComboBox(_palette);
             _checkpoints = new RibbonComboBox(_palette);
+            _agents.PlaceholderText = "No agents installed";
+            _models.PlaceholderText = "Select an agent";
+            _checkpoints.PlaceholderText = "No checkpoints yet";
             _manage = new RibbonButton(_palette, RibbonButtonKind.Secondary) { Text = "Agents", Glyph = RibbonGlyph.Agents, Width = 88 };
             _newConversation = new RibbonButton(_palette, RibbonButtonKind.Ghost) { Text = "New", Width = 60, Height = 26, MinimumSize = new Size(56, 26) };
             _history = new RibbonButton(_palette, RibbonButtonKind.Ghost) { Text = "History", Width = 72, Height = 26, MinimumSize = new Size(68, 26) };
@@ -94,6 +104,7 @@ namespace Ribbon.Vsto
             Font = new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point);
             MinimumSize = new Size(300, 360);
             BuildLayout();
+            ApplyResponsiveLayout();
             ShowModelPlaceholderCore("Select an agent");
             ShowWelcomeMessage();
             _runtime.SessionUpdate += RuntimeOnSessionUpdate;
@@ -125,7 +136,7 @@ namespace Ribbon.Vsto
 
         private void BuildLayout()
         {
-            var root = new TableLayoutPanel
+            _rootLayout = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
@@ -133,51 +144,52 @@ namespace Ribbon.Vsto
                 Padding = new Padding(12),
                 BackColor = _palette.Background
             };
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 178));
-            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 112));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+            _rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 184));
+            _rootLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            _rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 116));
+            _rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
 
-            root.Controls.Add(BuildHeader(), 0, 0);
-            root.Controls.Add(BuildTranscript(), 0, 1);
-            root.Controls.Add(BuildComposer(), 0, 2);
-            root.Controls.Add(BuildFooter(), 0, 3);
-            Controls.Add(root);
+            _rootLayout.Controls.Add(BuildHeader(), 0, 0);
+            _rootLayout.Controls.Add(BuildTranscript(), 0, 1);
+            _rootLayout.Controls.Add(BuildComposer(), 0, 2);
+            _rootLayout.Controls.Add(BuildFooter(), 0, 3);
+            Controls.Add(_rootLayout);
         }
 
         private Control BuildHeader()
         {
             var surface = new RibbonSurface(_palette) { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 10), Padding = new Padding(12, 10, 12, 10) };
             var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, BackColor = _palette.Surface };
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-            var brandRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, BackColor = _palette.Surface };
+            var brandRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = _palette.Surface };
             brandRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 40));
             brandRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            brandRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             var mark = new RibbonBrandMark(
                 _palette,
                 RibbonProductIdentity.GetMark(_hostKind),
                 RibbonProductIdentity.GetBrandColor(_hostKind)) { Margin = new Padding(0, 1, 8, 0) };
             var titles = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1, BackColor = _palette.Surface };
-            titles.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
-            titles.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
-            var title = LabelFor("Ribbon " + _productName, 10.5f, FontStyle.Bold, _palette.Text);
-            var subtitle = LabelFor("Agent workspace for " + _hostKind, 8f, FontStyle.Regular, _palette.MutedText);
+            titles.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+            titles.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            var title = LabelFor("Ribbon " + _productName, 11f, FontStyle.Bold, _palette.Text);
+            var subtitle = LabelFor("Agent workspace for " + _hostKind, 8.25f, FontStyle.Regular, _palette.MutedText);
             titles.Controls.Add(title, 0, 0);
             titles.Controls.Add(subtitle, 0, 1);
             brandRow.Controls.Add(mark, 0, 0);
             brandRow.Controls.Add(titles, 1, 0);
 
-            var agentRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2, BackColor = _palette.Surface };
-            agentRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            agentRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 94));
-            agentRow.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
-            agentRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            _agentRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2, BackColor = _palette.Surface };
+            _agentRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            _agentRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 94));
+            _agentRow.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
+            _agentRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             var agentLabel = LabelFor("AGENT", 7.5f, FontStyle.Bold, _palette.MutedText);
-            agentRow.Controls.Add(agentLabel, 0, 0);
-            agentRow.SetColumnSpan(agentLabel, 2);
+            _agentRow.Controls.Add(agentLabel, 0, 0);
+            _agentRow.SetColumnSpan(agentLabel, 2);
             _agents.Dock = DockStyle.Fill;
             _agents.DropDownStyle = ComboBoxStyle.DropDownList;
             _agents.FlatStyle = FlatStyle.Flat;
@@ -199,13 +211,13 @@ namespace Ribbon.Vsto
             picker.Controls.Add(_agents);
             picker.Controls.Add(arrow);
             arrow.BringToFront();
-            agentRow.Controls.Add(picker, 0, 1);
+            _agentRow.Controls.Add(picker, 0, 1);
             _manage.Dock = DockStyle.Fill;
             _manage.Margin = new Padding(6, 0, 0, 0);
             _manage.Click += async (sender, args) => await ManageAgentsAsync();
             _manage.AccessibleName = "Manage ACP agents";
             _toolTip.SetToolTip(_manage, "Browse, install, update, or remove ACP agents.");
-            agentRow.Controls.Add(_manage, 1, 1);
+            _agentRow.Controls.Add(_manage, 1, 1);
 
             var modelRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, BackColor = _palette.Surface, Margin = new Padding(0, 4, 0, 0) };
             modelRow.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
@@ -234,7 +246,7 @@ namespace Ribbon.Vsto
             modelRow.Controls.Add(modelPicker, 0, 1);
 
             layout.Controls.Add(brandRow, 0, 0);
-            layout.Controls.Add(agentRow, 0, 1);
+            layout.Controls.Add(_agentRow, 0, 1);
             layout.Controls.Add(modelRow, 0, 2);
             surface.Controls.Add(layout);
             return surface;
@@ -260,6 +272,7 @@ namespace Ribbon.Vsto
             _transcript.DetectUrls = true;
             _transcript.HideSelection = false;
             _transcript.AccessibleName = "Conversation transcript";
+            RibbonNativeTheme.ApplyDarkScrollBars(_transcript, _palette);
             layout.Controls.Add(_transcript, 0, 1);
             layout.Controls.Add(BuildCheckpointBar(), 0, 2);
             surface.Controls.Add(layout);
@@ -268,11 +281,11 @@ namespace Ribbon.Vsto
 
         private Control BuildConversationHeader()
         {
-            var header = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, BackColor = _palette.Surface, Margin = new Padding(0) };
-            header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 64));
-            header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 76));
-            header.Controls.Add(LabelFor("CONVERSATION", 7.5f, FontStyle.Bold, _palette.MutedText), 0, 0);
+            _conversationHeader = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, BackColor = _palette.Surface, Margin = new Padding(0) };
+            _conversationHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            _conversationHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 64));
+            _conversationHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 76));
+            _conversationHeader.Controls.Add(LabelFor("CONVERSATION", 7.5f, FontStyle.Bold, _palette.MutedText), 0, 0);
             _newConversation.Dock = DockStyle.Fill;
             _newConversation.Margin = new Padding(2, 0, 2, 0);
             _newConversation.Click += async (sender, args) => await NewConversationAsync();
@@ -283,14 +296,14 @@ namespace Ribbon.Vsto
             _history.AccessibleName = "Open Ribbon conversation history";
             _toolTip.SetToolTip(_newConversation, "Save this chat and start a fresh agent conversation.");
             _toolTip.SetToolTip(_history, "Browse saved Ribbon conversations.");
-            header.Controls.Add(_newConversation, 1, 0);
-            header.Controls.Add(_history, 2, 0);
-            return header;
+            _conversationHeader.Controls.Add(_newConversation, 1, 0);
+            _conversationHeader.Controls.Add(_history, 2, 0);
+            return _conversationHeader;
         }
 
         private Control BuildCheckpointBar()
         {
-            var bar = new TableLayoutPanel
+            _checkpointBar = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 3,
@@ -298,10 +311,11 @@ namespace Ribbon.Vsto
                 BackColor = _palette.Surface,
                 Margin = new Padding(0, 5, 0, 0)
             };
-            bar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 78));
-            bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            bar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 84));
-            bar.Controls.Add(LabelFor("CHECKPOINT", 7.5f, FontStyle.Bold, _palette.MutedText), 0, 0);
+            _checkpointBar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 78));
+            _checkpointBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            _checkpointBar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 84));
+            _checkpointLabel = LabelFor("CHECKPOINT", 7.5f, FontStyle.Bold, _palette.MutedText);
+            _checkpointBar.Controls.Add(_checkpointLabel, 0, 0);
 
             _checkpoints.Dock = DockStyle.Fill;
             _checkpoints.DropDownStyle = ComboBoxStyle.DropDownList;
@@ -309,7 +323,7 @@ namespace Ribbon.Vsto
             _checkpoints.Enabled = false;
             _checkpoints.AccessibleName = "Document checkpoint";
             _toolTip.SetToolTip(_checkpoints, "Choose a document state captured before an agent turn.");
-            bar.Controls.Add(_checkpoints, 1, 0);
+            _checkpointBar.Controls.Add(_checkpoints, 1, 0);
 
             _restoreCheckpoint.Dock = DockStyle.Fill;
             _restoreCheckpoint.Margin = new Padding(6, 0, 0, 0);
@@ -317,8 +331,8 @@ namespace Ribbon.Vsto
             _restoreCheckpoint.Click += async (sender, args) => await RestoreSelectedCheckpointAsync();
             _restoreCheckpoint.AccessibleName = "Restore selected document checkpoint";
             _toolTip.SetToolTip(_restoreCheckpoint, "Restore the open document to the selected checkpoint and start a fresh agent session.");
-            bar.Controls.Add(_restoreCheckpoint, 2, 0);
-            return bar;
+            _checkpointBar.Controls.Add(_restoreCheckpoint, 2, 0);
+            return _checkpointBar;
         }
 
         private Control BuildComposer()
@@ -329,47 +343,55 @@ namespace Ribbon.Vsto
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
             layout.Controls.Add(LabelFor("PROMPT", 7.5f, FontStyle.Bold, _palette.MutedText), 0, 0);
-            var promptHost = new Panel { Dock = DockStyle.Fill, BackColor = _palette.Surface, Margin = new Padding(0) };
+            var promptHost = new RibbonSurface(_palette)
+            {
+                Dock = DockStyle.Fill,
+                BackColor = _palette.SurfaceRaised,
+                Margin = new Padding(0, 0, 0, 2),
+                Padding = new Padding(10, 6, 10, 6),
+                CornerRadius = 7,
+                UseRaisedBackground = true
+            };
             _prompt.Dock = DockStyle.Fill;
             _prompt.Multiline = true;
             _prompt.BorderStyle = BorderStyle.None;
             _prompt.ScrollBars = ScrollBars.None;
             _prompt.WordWrap = true;
             _prompt.AcceptsReturn = true;
-            _prompt.BackColor = _palette.Surface;
+            _prompt.BackColor = _palette.SurfaceRaised;
             _prompt.ForeColor = _palette.Text;
             _prompt.Font = new Font(Font.FontFamily, 9.5f, FontStyle.Regular);
             _prompt.KeyDown += PromptOnKeyDown;
             _prompt.TextChanged += (sender, args) => UpdatePromptPlaceholder();
-            _prompt.Enter += (sender, args) => UpdatePromptPlaceholder();
-            _prompt.Leave += (sender, args) => UpdatePromptPlaceholder();
+            _prompt.Enter += (sender, args) => { promptHost.EmphasizeBorder = true; UpdatePromptPlaceholder(); };
+            _prompt.Leave += (sender, args) => { promptHost.EmphasizeBorder = false; UpdatePromptPlaceholder(); };
             _prompt.AccessibleName = "Prompt for the active agent";
             _promptPlaceholder.AutoSize = true;
             _promptPlaceholder.Text = "Describe what you want to do in " + _hostKind + "…";
             _promptPlaceholder.ForeColor = _palette.MutedText;
-            _promptPlaceholder.BackColor = _palette.Surface;
+            _promptPlaceholder.BackColor = _palette.SurfaceRaised;
             _promptPlaceholder.Font = new Font(Font.FontFamily, 9.5f, FontStyle.Regular);
-            _promptPlaceholder.Location = new Point(0, 2);
+            _promptPlaceholder.Location = new Point(10, 8);
             _promptPlaceholder.Cursor = Cursors.IBeam;
             _promptPlaceholder.Click += (sender, args) => _prompt.Focus();
             promptHost.Controls.Add(_prompt);
             promptHost.Controls.Add(_promptPlaceholder);
             _promptPlaceholder.BringToFront();
             layout.Controls.Add(promptHost, 0, 1);
-            var hint = LabelFor("Ctrl + Enter to send  ·  Enter for a new line", 7.5f, FontStyle.Regular, _palette.MutedText);
-            hint.TextAlign = ContentAlignment.BottomRight;
-            layout.Controls.Add(hint, 0, 2);
+            _composerHint = LabelFor("Ctrl + Enter to send  ·  Enter for a new line", 7.5f, FontStyle.Regular, _palette.MutedText);
+            _composerHint.TextAlign = ContentAlignment.BottomRight;
+            layout.Controls.Add(_composerHint, 0, 2);
             surface.Controls.Add(layout);
             return surface;
         }
 
         private Control BuildFooter()
         {
-            var footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, BackColor = _palette.Background, Margin = new Padding(0) };
-            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 18));
-            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82));
-            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 86));
+            _footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, BackColor = _palette.Background, Margin = new Padding(0) };
+            _footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 18));
+            _footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            _footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82));
+            _footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 86));
             _statusDot.Anchor = AnchorStyles.Left;
             _status.Margin = new Padding(0);
             _status.Dock = DockStyle.Fill;
@@ -386,11 +408,45 @@ namespace Ribbon.Vsto
             _send.Margin = new Padding(4, 4, 0, 4);
             _send.Click += async (sender, args) => await SendAsync();
             _send.AccessibleName = "Send prompt";
-            footer.Controls.Add(_statusDot, 0, 0);
-            footer.Controls.Add(_status, 1, 0);
-            footer.Controls.Add(_cancel, 2, 0);
-            footer.Controls.Add(_send, 3, 0);
-            return footer;
+            _footer.Controls.Add(_statusDot, 0, 0);
+            _footer.Controls.Add(_status, 1, 0);
+            _footer.Controls.Add(_cancel, 2, 0);
+            _footer.Controls.Add(_send, 3, 0);
+            return _footer;
+        }
+
+        protected override void OnSizeChanged(EventArgs e)
+        {
+            base.OnSizeChanged(e);
+            ApplyResponsiveLayout();
+        }
+
+        private void ApplyResponsiveLayout()
+        {
+            if (_rootLayout == null) return;
+            var compact = ClientSize.Width > 0 && ClientSize.Width < 380;
+            _rootLayout.Padding = compact ? new Padding(8) : new Padding(12);
+            if (_agentRow != null) _agentRow.ColumnStyles[1].Width = compact ? 84 : 94;
+            if (_conversationHeader != null)
+            {
+                _conversationHeader.ColumnStyles[1].Width = compact ? 54 : 64;
+                _conversationHeader.ColumnStyles[2].Width = compact ? 66 : 76;
+            }
+            if (_checkpointBar != null)
+            {
+                _checkpointBar.ColumnStyles[0].Width = compact ? 0 : 78;
+                _checkpointBar.ColumnStyles[2].Width = compact ? 76 : 84;
+            }
+            if (_checkpointLabel != null) _checkpointLabel.Visible = !compact;
+            if (_composerHint != null)
+            {
+                _composerHint.Text = compact ? "Ctrl + Enter to send" : "Ctrl + Enter to send  ·  Enter for a new line";
+            }
+            if (_footer != null)
+            {
+                _footer.ColumnStyles[2].Width = compact ? 72 : 82;
+                _footer.ColumnStyles[3].Width = compact ? 78 : 86;
+            }
         }
 
         private async Task InitializeAsync()

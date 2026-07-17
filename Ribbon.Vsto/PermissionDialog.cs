@@ -53,13 +53,19 @@ namespace Ribbon.Vsto
                 Padding = new Padding(18),
                 BackColor = _palette.Background
             };
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 66));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
             root.Controls.Add(BuildHeader(heading, description), 0, 0);
             root.Controls.Add(BuildBody(details), 0, 1);
             root.Controls.Add(BuildActions(options), 0, 2);
             Controls.Add(root);
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            RibbonWindowChrome.Apply(this, _palette);
         }
 
         public static PermissionDecision ShowAcp(IWin32Window owner, PermissionPrompt prompt, RibbonPalette palette)
@@ -119,12 +125,13 @@ namespace Ribbon.Vsto
             var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = _palette.Background };
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 42));
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             var mark = new RibbonBrandMark(_palette, "!", _palette.Danger) { Margin = new Padding(0, 3, 10, 0) };
             var text = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, BackColor = _palette.Background };
-            text.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+            text.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
             text.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            text.Controls.Add(Label(heading, 12f, FontStyle.Bold, _palette.Text), 0, 0);
-            text.Controls.Add(Label(description, 8.5f, FontStyle.Regular, _palette.MutedText), 0, 1);
+            text.Controls.Add(Label(heading, 12f, FontStyle.Bold, _palette.Text, _palette.Background), 0, 0);
+            text.Controls.Add(Label(description, 8.5f, FontStyle.Regular, _palette.MutedText, _palette.Background), 0, 1);
             layout.Controls.Add(mark, 0, 0);
             layout.Controls.Add(text, 1, 0);
             return layout;
@@ -137,7 +144,7 @@ namespace Ribbon.Vsto
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            layout.Controls.Add(Label("ACTION DETAILS", 7.5f, FontStyle.Bold, _palette.MutedText), 0, 0);
+            layout.Controls.Add(Label("ACTION DETAILS", 7.5f, FontStyle.Bold, _palette.MutedText, _palette.Surface), 0, 0);
             var detailText = new TextBox
             {
                 Dock = DockStyle.Fill,
@@ -150,6 +157,7 @@ namespace Ribbon.Vsto
                 Text = string.IsNullOrWhiteSpace(details) ? "No additional details were provided." : details,
                 AccessibleName = "Permission action details"
             };
+            RibbonNativeTheme.ApplyDarkScrollBars(detailText, _palette);
             layout.Controls.Add(detailText, 0, 1);
             layout.Controls.Add(_remember, 0, 2);
             surface.Controls.Add(layout);
@@ -197,7 +205,7 @@ namespace Ribbon.Vsto
             return actions;
         }
 
-        private Label Label(string text, float size, FontStyle style, Color color)
+        private Label Label(string text, float size, FontStyle style, Color color, Color background)
         {
             return new Label
             {
@@ -206,7 +214,7 @@ namespace Ribbon.Vsto
                 AutoEllipsis = true,
                 TextAlign = ContentAlignment.MiddleLeft,
                 ForeColor = color,
-                BackColor = _palette.Background,
+                BackColor = background,
                 Font = new Font(Font.FontFamily, size, style),
                 Margin = new Padding(0)
             };

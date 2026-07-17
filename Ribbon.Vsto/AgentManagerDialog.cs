@@ -114,14 +114,23 @@ namespace Ribbon.Vsto
             var toolbar = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, BackColor = _palette.Background, Margin = new Padding(0, 0, 0, 8) };
             toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
-            var searchSurface = new RibbonSurface(_palette) { Dock = DockStyle.Fill, Padding = new Padding(12, 7, 12, 5), Margin = new Padding(0, 3, 0, 3), CornerRadius = 7 };
+            var searchSurface = new RibbonSurface(_palette)
+            {
+                Dock = DockStyle.Fill,
+                Padding = new Padding(12, 7, 12, 5),
+                Margin = new Padding(0, 3, 0, 3),
+                CornerRadius = 7,
+                UseRaisedBackground = true
+            };
             _search.Dock = DockStyle.Fill;
             _search.BorderStyle = BorderStyle.None;
-            _search.BackColor = _palette.Surface;
+            _search.BackColor = _palette.SurfaceRaised;
             _search.ForeColor = _palette.Text;
             _search.Font = new Font(Font.FontFamily, 9.25f, FontStyle.Regular);
             _search.TextChanged += (sender, args) => ApplyFilter();
             _search.KeyDown += SearchOnKeyDown;
+            _search.Enter += (sender, args) => searchSurface.EmphasizeBorder = true;
+            _search.Leave += (sender, args) => searchSurface.EmphasizeBorder = false;
             _search.AccessibleName = "Search ACP agents";
             RibbonCue.Set(_search, "Search by agent name, id, or description");
             searchSurface.Controls.Add(_search);
@@ -158,6 +167,7 @@ namespace Ribbon.Vsto
             _list.DoubleClick += async (sender, args) => { if (_toggle.Enabled) await ToggleAsync(); };
             _list.Resize += (sender, args) => FitColumns();
             _list.AccessibleName = "Compatible ACP agents";
+            RibbonNativeTheme.ApplyDarkScrollBars(_list, _palette);
             surface.Controls.Add(_list);
             return surface;
         }
@@ -233,8 +243,8 @@ namespace Ribbon.Vsto
                 Anchor = AnchorStyles.Right
             };
             actions.Controls.Add(_refresh);
-            actions.Controls.Add(_toggle);
             actions.Controls.Add(_close);
+            actions.Controls.Add(_toggle);
             footer.Controls.Add(_statusDot, 0, 0);
             footer.Controls.Add(_status, 1, 0);
             footer.Controls.Add(actions, 2, 0);
@@ -410,7 +420,7 @@ namespace Ribbon.Vsto
         private void FitColumns()
         {
             if (_list.Columns.Count < 5) return;
-            var available = _list.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 3;
+            var available = _list.ClientSize.Width;
             if (available < 300) return;
             _list.Columns[0].Width = available * 23 / 100;
             _list.Columns[1].Width = available * 10 / 100;

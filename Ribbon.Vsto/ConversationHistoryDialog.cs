@@ -39,6 +39,8 @@ namespace Ribbon.Vsto
             BackColor = _palette.Background;
             ForeColor = _palette.Text;
             Font = new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point);
+            DoubleBuffered = true;
+            ResizeRedraw = true;
             BuildLayout();
         }
 
@@ -66,7 +68,7 @@ namespace Ribbon.Vsto
 
         private void BuildLayout()
         {
-            var root = new TableLayoutPanel
+            var root = new RibbonLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
@@ -91,11 +93,12 @@ namespace Ribbon.Vsto
 
         private Control BuildHeader()
         {
-            var header = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, BackColor = _palette.Background };
+            var header = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = _palette.Background };
             header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 48));
             header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            header.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             var mark = new RibbonBrandMark(_palette) { Margin = new Padding(2, 4, 10, 0) };
-            var titles = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, BackColor = _palette.Background };
+            var titles = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, BackColor = _palette.Background };
             titles.RowStyles.Add(new RowStyle(SizeType.Absolute, 29));
             titles.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
             titles.Controls.Add(LabelFor("Conversation History", 14f, FontStyle.Bold, _palette.Text, _palette.Background), 0, 0);
@@ -110,12 +113,20 @@ namespace Ribbon.Vsto
             var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, BackColor = _palette.Background };
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
-            var searchSurface = new RibbonSurface(_palette) { Dock = DockStyle.Fill, Padding = new Padding(12, 7, 12, 5), CornerRadius = 7 };
+            var searchSurface = new RibbonSurface(_palette)
+            {
+                Dock = DockStyle.Fill,
+                Padding = new Padding(12, 7, 12, 5),
+                CornerRadius = 7,
+                UseRaisedBackground = true
+            };
             _search.Dock = DockStyle.Fill;
             _search.BorderStyle = BorderStyle.None;
-            _search.BackColor = _palette.Surface;
+            _search.BackColor = _palette.SurfaceRaised;
             _search.ForeColor = _palette.Text;
             _search.TextChanged += (sender, args) => ApplyFilter();
+            _search.Enter += (sender, args) => searchSurface.EmphasizeBorder = true;
+            _search.Leave += (sender, args) => searchSurface.EmphasizeBorder = false;
             _search.AccessibleName = "Search Ribbon conversation history";
             RibbonCue.Set(_search, "Search by title, agent, model, or document");
             searchSurface.Controls.Add(_search);
@@ -157,6 +168,7 @@ namespace Ribbon.Vsto
             _list.DoubleClick += (sender, args) => OpenSelected();
             _list.Resize += (sender, args) => FitColumns();
             _list.AccessibleName = "Saved Ribbon conversations";
+            RibbonNativeTheme.ApplyDarkScrollBars(_list, _palette);
             surface.Controls.Add(_list);
             return surface;
         }
@@ -176,10 +188,13 @@ namespace Ribbon.Vsto
 
         private Control BuildFooter()
         {
-            var footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, BackColor = _palette.Background };
+            var footer = new RibbonLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 5, RowCount = 1, BackColor = _palette.Background };
             footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 18));
             footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 100));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 88));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 96));
+            footer.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             _statusDot.Anchor = AnchorStyles.Left;
             _statusDot.DotColor = _palette.Success;
             _status.Dock = DockStyle.Fill;
@@ -187,23 +202,17 @@ namespace Ribbon.Vsto
             _status.ForeColor = _palette.MutedText;
             _delete.Click += (sender, args) => DeleteSelected();
             _open.Click += (sender, args) => OpenSelected();
-            var actions = new FlowLayoutPanel
-            {
-                AutoSize = true,
-                WrapContents = false,
-                FlowDirection = FlowDirection.LeftToRight,
-                BackColor = _palette.Background,
-                Anchor = AnchorStyles.Right,
-                Margin = new Padding(0)
-            };
-            foreach (var button in new[] { _delete, _open, _close })
-            {
-                button.Margin = new Padding(4, 6, 0, 5);
-                actions.Controls.Add(button);
-            }
+            _delete.Dock = DockStyle.Fill;
+            _delete.Margin = new Padding(4, 6, 0, 5);
+            _close.Dock = DockStyle.Fill;
+            _close.Margin = new Padding(4, 6, 0, 5);
+            _open.Dock = DockStyle.Fill;
+            _open.Margin = new Padding(4, 6, 0, 5);
             footer.Controls.Add(_statusDot, 0, 0);
             footer.Controls.Add(_status, 1, 0);
-            footer.Controls.Add(actions, 2, 0);
+            footer.Controls.Add(_delete, 2, 0);
+            footer.Controls.Add(_close, 3, 0);
+            footer.Controls.Add(_open, 4, 0);
             return footer;
         }
 
@@ -297,7 +306,7 @@ namespace Ribbon.Vsto
         private void FitColumns()
         {
             if (_list.Columns.Count != 5 || _list.ClientSize.Width <= 0) return;
-            var available = Math.Max(540, _list.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 4);
+            var available = Math.Max(540, _list.ClientSize.Width);
             _list.Columns[4].Width = 105;
             _list.Columns[3].Width = 132;
             _list.Columns[2].Width = Math.Max(145, available / 5);

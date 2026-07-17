@@ -275,6 +275,12 @@ namespace Ribbon.Vsto
                     break;
             }
             if (_pressed) fill = RibbonDrawing.Blend(fill, Color.Black, _palette.IsDark ? 0.16f : 0.08f);
+            if (!Enabled)
+            {
+                fill = RibbonDrawing.Blend(fill, _palette.Surface, 0.68f);
+                border = RibbonDrawing.Blend(border, _palette.Surface, 0.58f);
+                text = RibbonDrawing.Blend(text, _palette.Surface, 0.5f);
+            }
             return Tuple.Create(fill, border, text);
         }
 
@@ -318,6 +324,8 @@ namespace Ribbon.Vsto
     internal sealed class RibbonSurface : Panel
     {
         private readonly RibbonPalette _palette;
+        private bool _emphasizeBorder;
+        private bool _useRaisedBackground;
 
         public RibbonSurface(RibbonPalette palette)
         {
@@ -329,13 +337,36 @@ namespace Ribbon.Vsto
 
         public int CornerRadius { get; set; } = 9;
 
+        public bool EmphasizeBorder
+        {
+            get { return _emphasizeBorder; }
+            set
+            {
+                if (_emphasizeBorder == value) return;
+                _emphasizeBorder = value;
+                Invalidate();
+            }
+        }
+
+        public bool UseRaisedBackground
+        {
+            get { return _useRaisedBackground; }
+            set
+            {
+                if (_useRaisedBackground == value) return;
+                _useRaisedBackground = value;
+                BackColor = value ? _palette.SurfaceRaised : _palette.Surface;
+                Invalidate();
+            }
+        }
+
         protected override void OnPaint(PaintEventArgs e)
         {
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
             var bounds = new Rectangle(0, 0, Width - 1, Height - 1);
             using (var path = RibbonDrawing.RoundRectangle(bounds, CornerRadius))
-            using (var fill = new SolidBrush(_palette.Surface))
-            using (var border = new Pen(_palette.Border))
+            using (var fill = new SolidBrush(_useRaisedBackground ? _palette.SurfaceRaised : _palette.Surface))
+            using (var border = new Pen(_emphasizeBorder ? _palette.Accent : _palette.Border, _emphasizeBorder ? 1.4f : 1f))
             {
                 e.Graphics.FillPath(fill, path);
                 e.Graphics.DrawPath(border, path);
@@ -344,10 +375,22 @@ namespace Ribbon.Vsto
         }
     }
 
+    internal sealed class RibbonLayoutPanel : TableLayoutPanel
+    {
+        public RibbonLayoutPanel()
+        {
+            DoubleBuffered = true;
+            ResizeRedraw = true;
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+        }
+    }
+
     internal sealed class RibbonComboBox : ComboBox
     {
         private const int WmPaint = 0x000F;
         private const int WmNcPaint = 0x0085;
+        private const int WmPrint = 0x0317;
+        private const int WmPrintClient = 0x0318;
         private readonly RibbonPalette _palette;
 
         public RibbonComboBox(RibbonPalette palette)
@@ -358,23 +401,59 @@ namespace Ribbon.Vsto
             ForeColor = palette.Text;
         }
 
+        public string PlaceholderText { get; set; }
+
+        protected override void OnSelectedIndexChanged(EventArgs e)
+        {
+            base.OnSelectedIndexChanged(e);
+            Invalidate();
+        }
+
+        protected override void OnGotFocus(EventArgs e)
+        {
+            base.OnGotFocus(e);
+            Invalidate();
+        }
+
+        protected override void OnLostFocus(EventArgs e)
+        {
+            base.OnLostFocus(e);
+            Invalidate();
+        }
+
+        protected override void OnEnabledChanged(EventArgs e)
+        {
+            base.OnEnabledChanged(e);
+            Invalidate();
+        }
+
         protected override void WndProc(ref Message message)
         {
             base.WndProc(ref message);
-            if (message.Msg != WmPaint && message.Msg != WmNcPaint) return;
+            if (message.Msg != WmPaint && message.Msg != WmNcPaint && message.Msg != WmPrint && message.Msg != WmPrintClient) return;
             try
             {
-                using (var graphics = Graphics.FromHwnd(Handle))
+                using (var graphics = (message.Msg == WmPrint || message.Msg == WmPrintClient) && message.WParam != IntPtr.Zero
+                    ? Graphics.FromHdc(message.WParam)
+                    : Graphics.FromHwnd(Handle))
                 using (var background = new SolidBrush(_palette.SurfaceRaised))
-                using (var border = new Pen(_palette.Border))
-                using (var arrow = new SolidBrush(_palette.MutedText))
+                using (var border = new Pen(Focused ? _palette.Accent : _palette.Border, Focused ? 1.4f : 1f))
+                using (var arrow = new SolidBrush(Enabled ? _palette.MutedText : RibbonDrawing.Blend(_palette.MutedText, _palette.SurfaceRaised, 0.45f)))
                 {
                     var buttonWidth = Math.Max(22, Height);
-                    var button = new Rectangle(Width - buttonWidth, 1, buttonWidth - 1, Height - 2);
-                    graphics.FillRectangle(background, button);
+                    graphics.FillRectangle(background, ClientRectangle);
                     graphics.DrawRectangle(border, 0, 0, Width - 1, Height - 1);
-                    var centerX = button.Left + button.Width / 2;
-                    var centerY = button.Top + button.Height / 2;
+                    var text = GetItemText(SelectedItem);
+                    var placeholder = string.IsNullOrWhiteSpace(text);
+                    if (placeholder) text = PlaceholderText ?? string.Empty;
+                    var textColor = placeholder || !Enabled
+                        ? RibbonDrawing.Blend(_palette.MutedText, _palette.SurfaceRaised, !Enabled ? 0.4f : 0f)
+                        : _palette.Text;
+                    TextRenderer.DrawText(graphics, text ?? string.Empty, Font,
+                        new Rectangle(9, 1, Math.Max(0, Width - buttonWidth - 12), Height - 2), textColor,
+                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+                    var centerX = Width - buttonWidth / 2;
+                    var centerY = Height / 2;
                     graphics.FillPolygon(arrow, new[]
                     {
                         new Point(centerX - 4, centerY - 2),
@@ -404,13 +483,21 @@ namespace Ribbon.Vsto
             BackColor = palette.SurfaceRaised;
             SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
             Click += (sender, args) => { if (_comboBox.Enabled) _comboBox.DroppedDown = true; };
+            _comboBox.EnabledChanged += ComboBoxOnVisualStateChanged;
+            _comboBox.GotFocus += ComboBoxOnVisualStateChanged;
+            _comboBox.LostFocus += ComboBoxOnVisualStateChanged;
+        }
+
+        private void ComboBoxOnVisualStateChanged(object sender, EventArgs e)
+        {
+            Invalidate();
         }
 
         protected override void OnPaint(PaintEventArgs e)
         {
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
             using (var background = new SolidBrush(_palette.SurfaceRaised)) e.Graphics.FillRectangle(background, ClientRectangle);
-            using (var arrow = new SolidBrush(Enabled ? _palette.MutedText : RibbonDrawing.Blend(_palette.MutedText, _palette.SurfaceRaised, 0.35f)))
+            using (var arrow = new SolidBrush(_comboBox.Enabled ? _palette.MutedText : RibbonDrawing.Blend(_palette.MutedText, _palette.SurfaceRaised, 0.35f)))
             {
                 var centerX = Width / 2;
                 var centerY = Height / 2;
@@ -421,7 +508,18 @@ namespace Ribbon.Vsto
                     new Point(centerX, centerY + 3)
                 });
             }
-            using (var border = new Pen(_palette.Border)) e.Graphics.DrawLine(border, 0, 0, 0, Height);
+            using (var border = new Pen(_comboBox.Focused ? _palette.Accent : _palette.Border)) e.Graphics.DrawLine(border, 0, 0, 0, Height);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _comboBox.EnabledChanged -= ComboBoxOnVisualStateChanged;
+                _comboBox.GotFocus -= ComboBoxOnVisualStateChanged;
+                _comboBox.LostFocus -= ComboBoxOnVisualStateChanged;
+            }
+            base.Dispose(disposing);
         }
     }
 
@@ -456,6 +554,10 @@ namespace Ribbon.Vsto
             using (var brush = new LinearGradientBrush(ClientRectangle, _brandColor, highlight, 45f))
             {
                 e.Graphics.FillEllipse(brush, 0, 0, Width - 1, Height - 1);
+            }
+            using (var ring = new Pen(Color.FromArgb(_palette.IsDark ? 70 : 45, Color.White)))
+            {
+                e.Graphics.DrawEllipse(ring, 1, 1, Width - 3, Height - 3);
             }
             TextRenderer.DrawText(e.Graphics, _mark, _markFont, ClientRectangle,
                 Color.White, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
@@ -504,6 +606,35 @@ namespace Ribbon.Vsto
                 }
             }
             catch
+            {
+            }
+        }
+    }
+
+    internal static class RibbonNativeTheme
+    {
+        [DllImport("uxtheme.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        private static extern int SetWindowTheme(IntPtr handle, string subAppName, string subIdList);
+
+        public static void ApplyDarkScrollBars(Control control, RibbonPalette palette)
+        {
+            if (control == null || palette == null || !palette.IsDark || SystemInformation.HighContrast) return;
+            control.HandleCreated += (sender, args) => ApplyDarkExplorerTheme(control);
+            if (control.IsHandleCreated) ApplyDarkExplorerTheme(control);
+        }
+
+        private static void ApplyDarkExplorerTheme(Control control)
+        {
+            if (control == null || control.IsDisposed || !control.IsHandleCreated) return;
+            try
+            {
+                SetWindowTheme(control.Handle, "DarkMode_Explorer", null);
+                control.Invalidate(true);
+            }
+            catch (DllNotFoundException)
+            {
+            }
+            catch (EntryPointNotFoundException)
             {
             }
         }
