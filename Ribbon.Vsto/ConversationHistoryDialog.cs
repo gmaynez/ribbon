@@ -191,9 +191,9 @@ namespace Ribbon.Vsto
             var footer = new RibbonLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 5, RowCount = 1, BackColor = _palette.Background };
             footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 18));
             footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 100));
-            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 88));
-            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 96));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 104));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92));
             footer.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             _statusDot.Anchor = AnchorStyles.Left;
             _statusDot.DotColor = _palette.Success;
@@ -203,11 +203,11 @@ namespace Ribbon.Vsto
             _delete.Click += (sender, args) => DeleteSelected();
             _open.Click += (sender, args) => OpenSelected();
             _delete.Dock = DockStyle.Fill;
-            _delete.Margin = new Padding(4, 6, 0, 5);
+            _delete.Margin = new Padding(0, 6, 8, 5);
             _close.Dock = DockStyle.Fill;
-            _close.Margin = new Padding(4, 6, 0, 5);
+            _close.Margin = new Padding(0, 6, 8, 5);
             _open.Dock = DockStyle.Fill;
-            _open.Margin = new Padding(4, 6, 0, 5);
+            _open.Margin = new Padding(0, 6, 0, 5);
             footer.Controls.Add(_statusDot, 0, 0);
             footer.Controls.Add(_status, 1, 0);
             footer.Controls.Add(_delete, 2, 0);

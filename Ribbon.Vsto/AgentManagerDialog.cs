@@ -207,10 +207,13 @@ namespace Ribbon.Vsto
 
         private Control BuildFooter()
         {
-            var footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, BackColor = _palette.Background };
+            var footer = new RibbonLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 5, RowCount = 1, BackColor = _palette.Background };
             footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 18));
             footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 112));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 112));
+            footer.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             _statusDot.Anchor = AnchorStyles.Left;
             _statusDot.DotColor = _palette.MutedText;
             _status.Dock = DockStyle.Fill;
@@ -219,35 +222,23 @@ namespace Ribbon.Vsto
             _status.ForeColor = _palette.MutedText;
             _status.Font = new Font(Font.FontFamily, 8.5f, FontStyle.Regular);
             _refresh.Dock = DockStyle.Fill;
-            _refresh.Margin = new Padding(0, 6, 4, 5);
+            _refresh.Margin = new Padding(0, 6, 8, 5);
             _refresh.Click += async (sender, args) => await ReloadAsync();
             _toggle.Dock = DockStyle.Fill;
-            _toggle.Margin = new Padding(4, 6, 4, 5);
+            _toggle.Margin = new Padding(0, 6, 0, 5);
             _toggle.Click += async (sender, args) => await ToggleAsync();
             _close.Dock = DockStyle.Fill;
-            _close.Margin = new Padding(4, 6, 0, 5);
+            _close.Margin = new Padding(0, 6, 8, 5);
             _refresh.AccessibleName = "Refresh ACP Registry";
-            _toggle.AccessibleName = "Install or uninstall selected agent";
+            _toggle.AccessibleName = "Install, update, or uninstall selected agent";
             _close.AccessibleName = "Close Agent Registry";
             _toolTip.SetToolTip(_refresh, "Download the latest compatible agents from the ACP Registry.");
             _toolTip.SetToolTip(_close, "Close the Agent Registry.");
-            var actions = new FlowLayoutPanel
-            {
-                AutoSize = true,
-                AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                WrapContents = false,
-                FlowDirection = FlowDirection.LeftToRight,
-                BackColor = _palette.Background,
-                Margin = new Padding(0),
-                Padding = new Padding(0),
-                Anchor = AnchorStyles.Right
-            };
-            actions.Controls.Add(_refresh);
-            actions.Controls.Add(_close);
-            actions.Controls.Add(_toggle);
             footer.Controls.Add(_statusDot, 0, 0);
             footer.Controls.Add(_status, 1, 0);
-            footer.Controls.Add(actions, 2, 0);
+            footer.Controls.Add(_refresh, 2, 0);
+            footer.Controls.Add(_close, 3, 0);
+            footer.Controls.Add(_toggle, 4, 0);
             return footer;
         }
 
@@ -308,10 +299,13 @@ namespace Ribbon.Vsto
         {
             var agent = SelectedAgent();
             if (agent == null) return;
-            SetBusy(true, agent.Installed ? "Uninstalling " + agent.Name + "…" : "Installing " + agent.Name + "…");
+            SetBusy(true, agent.UpdateAvailable
+                ? "Updating " + agent.Name + "…"
+                : agent.Installed ? "Uninstalling " + agent.Name + "…" : "Installing " + agent.Name + "…");
             try
             {
-                if (agent.Installed) await _runtime.UninstallAgentAsync(agent.Id);
+                if (agent.UpdateAvailable) await _runtime.InstallAgentAsync(agent.Id);
+                else if (agent.Installed) await _runtime.UninstallAgentAsync(agent.Id);
                 else await _runtime.InstallAgentAsync(agent.Id);
                 await ReloadAsync();
             }
@@ -326,9 +320,9 @@ namespace Ribbon.Vsto
         {
             var agent = SelectedAgent();
             _toggle.Enabled = agent != null;
-            _toggle.Text = agent != null && agent.Installed ? "Uninstall" : "Install";
-            _toggle.Glyph = agent != null && agent.Installed ? RibbonGlyph.Remove : RibbonGlyph.Download;
-            _toggle.Kind = agent != null && agent.Installed ? RibbonButtonKind.Danger : RibbonButtonKind.Primary;
+            _toggle.Text = agent != null && agent.UpdateAvailable ? "Update" : agent != null && agent.Installed ? "Uninstall" : "Install";
+            _toggle.Glyph = agent != null && agent.UpdateAvailable ? RibbonGlyph.Refresh : agent != null && agent.Installed ? RibbonGlyph.Remove : RibbonGlyph.Download;
+            _toggle.Kind = agent != null && agent.Installed && !agent.UpdateAvailable ? RibbonButtonKind.Danger : RibbonButtonKind.Primary;
             _detailTitle.Text = agent?.Name ?? "Agent details";
             _description.Text = agent?.Description ?? "Select an agent to see its details.";
             _metadata.Text = agent == null
@@ -336,6 +330,7 @@ namespace Ribbon.Vsto
                 : string.Join("   ·   ", new[] { agent.Id, "v" + agent.Version, agent.DistributionType, agent.License }.Where(value => !string.IsNullOrWhiteSpace(value)));
             _toolTip.SetToolTip(_toggle, agent == null
                 ? "Select an agent first."
+                : agent.UpdateAvailable ? "Update " + agent.Name + " to version " + agent.Version + "."
                 : agent.Installed ? "Uninstall " + agent.Name + "." : "Install " + agent.Name + ".");
         }
 

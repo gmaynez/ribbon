@@ -214,6 +214,10 @@ namespace Ribbon.Vsto
         protected override void OnPaint(PaintEventArgs e)
         {
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using (var background = new SolidBrush(Parent?.BackColor ?? _palette.Surface))
+            {
+                e.Graphics.FillRectangle(background, ClientRectangle);
+            }
             var bounds = new Rectangle(0, 0, Width - 1, Height - 1);
             var colors = GetColors();
             using (var path = RibbonDrawing.RoundRectangle(bounds, 7))
