@@ -23,6 +23,7 @@ namespace Ribbon.Vsto
         private readonly object _permissionGate = new object();
         private readonly HashSet<string> _rememberedPermissions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly CancellationTokenSource _closed = new CancellationTokenSource();
+        private volatile ApprovalMode _approvalMode = ApprovalMode.Ask;
         private NamedPipeClientStream _pipe;
         private StreamReader _reader;
         private StreamWriter _writer;
@@ -37,15 +38,35 @@ namespace Ribbon.Vsto
         }
 
         public event EventHandler<SessionUpdateMessage> SessionUpdate;
+        public event EventHandler<ApprovalMode> ApprovalModeChanged;
+        public event EventHandler<AutoApprovalRecord> AutoApproved;
+
+        public ApprovalMode ApprovalMode => _approvalMode;
+
+        public void SetApprovalMode(ApprovalMode mode)
+        {
+            var previous = _approvalMode;
+            _approvalMode = mode;
+            if (previous != mode)
+            {
+                try { ApprovalModeChanged?.Invoke(this, mode); }
+                catch { /* a subscriber must not break a mode change */ }
+            }
+        }
 
         public void SetActiveSession(string sessionId)
         {
+            var changed = false;
             lock (_permissionGate)
             {
                 if (string.Equals(_activeSessionId, sessionId, StringComparison.Ordinal)) return;
                 _activeSessionId = sessionId ?? string.Empty;
                 _rememberedPermissions.Clear();
+                changed = true;
             }
+            // A new agent session is a fresh trust boundary. Auto-approvals must not carry
+            // over, so the mode resets to Ask outside the gate to avoid raising under a lock.
+            if (changed) SetApprovalMode(ApprovalMode.Ask);
         }
 
         public async Task ConnectAsync(CancellationToken cancellationToken)
@@ -232,6 +253,13 @@ namespace Ribbon.Vsto
             var options = prompt.Options ?? new List<PermissionChoice>();
             var allow = options.FirstOrDefault(option =>
                 option.Kind != null && option.Kind.StartsWith("allow", StringComparison.OrdinalIgnoreCase));
+
+            if (_approvalMode == ApprovalMode.Auto && allow != null)
+            {
+                RaiseAutoApproved("acp", prompt.Title, prompt.RawJson);
+                return new PermissionDecision { OptionId = allow.OptionId, Cancelled = false, RememberForSession = false };
+            }
+
             var permissionKey = PermissionKey("acp", prompt.Title);
             if (allow != null && IsRemembered(permissionKey))
             {
@@ -271,6 +299,12 @@ namespace Ribbon.Vsto
             var definition = _host.GetTools().FirstOrDefault(tool =>
                 string.Equals(tool.Name, invocation.ToolName, StringComparison.OrdinalIgnoreCase));
             if (definition == null || !definition.Destructive) return true;
+
+            if (_approvalMode == ApprovalMode.Auto)
+            {
+                RaiseAutoApproved("office", invocation.ToolName, invocation.ArgumentsJson);
+                return true;
+            }
 
             var permissionKey = PermissionKey("office", invocation.ToolName);
             if (IsRemembered(permissionKey)) return true;
@@ -323,6 +357,12 @@ namespace Ribbon.Vsto
         private void Remember(string key)
         {
             lock (_permissionGate) _rememberedPermissions.Add(key);
+        }
+
+        private void RaiseAutoApproved(string category, string action, string argumentsJson)
+        {
+            try { AutoApproved?.Invoke(this, new AutoApprovalRecord(category, action, argumentsJson)); }
+            catch { /* audit logging must never break an approved tool call */ }
         }
 
         private async Task WriteAsync(RpcEnvelope envelope, CancellationToken cancellationToken)

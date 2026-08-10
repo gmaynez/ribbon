@@ -25,7 +25,7 @@ This keeps failure and deployment boundaries aligned with Office while preservin
 8. During MCP `initialize`, the proxy asks the primary broker for the live tool catalog. It composes an inspect–act–verify playbook from only those capabilities, with the preferred Office host first.
 9. A later MCP `tools/list` refreshes the live catalog; every listed tool retains its host routing identity, description, strict schema, and mutation annotations.
 10. Before each prompt, the owning VSTO host captures a local checkpoint of the document state that Ribbon tools can mutate.
-11. MCP calls are routed to the VSTO process that owns the selected tool. Destructive definitions require user approval there before execution on that Office application's UI thread.
+11. MCP calls are routed to the VSTO process that owns the selected tool. Destructive definitions require user approval there before execution on that Office application's UI thread. A per-session Auto-approve mode in the task pane can pre-authorize destructive Office tools and relayed ACP permission requests without prompting; it is off by default, requires explicit opt-in, resets to Ask when the agent session changes, and logs each auto-approved action to the transcript.
 12. ACP message chunks, thoughts, plans, tool progress, and configuration updates stream back through the broker to the task pane.
 13. Ribbon persists the structured transcript and document/session metadata locally. Reopening a saved conversation uses ACP `session/list` for advisory discovery and `session/resume` or `session/load` only when the agent advertises the corresponding capability.
 

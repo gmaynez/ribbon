@@ -24,10 +24,18 @@ namespace Ribbon.Vsto
             _client = new BrokerClient(host, ui ?? throw new ArgumentNullException(nameof(ui)));
             _lifetimeToken = _lifetime.Token;
             _client.SessionUpdate += (sender, message) => SessionUpdate?.Invoke(this, message);
+            _client.ApprovalModeChanged += (sender, mode) => ApprovalModeChanged?.Invoke(this, mode);
+            _client.AutoApproved += (sender, record) => AutoApproved?.Invoke(this, record);
         }
 
         public HostRegistration Registration => _host.Registration;
         public event EventHandler<SessionUpdateMessage> SessionUpdate;
+        internal event EventHandler<ApprovalMode> ApprovalModeChanged;
+        internal event EventHandler<AutoApprovalRecord> AutoApproved;
+
+        internal ApprovalMode ApprovalMode => _client.ApprovalMode;
+
+        internal void SetApprovalMode(ApprovalMode mode) => _client.SetApprovalMode(mode);
 
         public Task StartAsync()
         {

@@ -19,6 +19,7 @@ namespace Ribbon.Vsto
         private readonly RibbonButton _newConversation;
         private readonly RibbonButton _history;
         private readonly RibbonButton _restoreCheckpoint;
+        private readonly RibbonButton _approvalModeToggle;
         private readonly RichTextBox _transcript;
         private readonly TextBox _prompt;
         private readonly RibbonButton _send;
@@ -82,6 +83,7 @@ namespace Ribbon.Vsto
             _newConversation = new RibbonButton(_palette, RibbonButtonKind.Ghost) { Text = "New", Width = 60, Height = 26, MinimumSize = new Size(56, 26) };
             _history = new RibbonButton(_palette, RibbonButtonKind.Ghost) { Text = "History", Width = 72, Height = 26, MinimumSize = new Size(68, 26) };
             _restoreCheckpoint = new RibbonButton(_palette, RibbonButtonKind.Secondary) { Text = "Restore", Width = 78 };
+            _approvalModeToggle = new RibbonButton(_palette, RibbonButtonKind.Ghost) { Text = "Ask", Width = 62, Height = 26, MinimumSize = new Size(54, 26) };
             _transcript = new RichTextBox();
             _prompt = new TextBox();
             _send = new RibbonButton(_palette, RibbonButtonKind.Primary) { Text = "Send", Glyph = RibbonGlyph.Send, Width = 80 };
@@ -108,6 +110,8 @@ namespace Ribbon.Vsto
             ShowModelPlaceholderCore("Select an agent");
             ShowWelcomeMessage();
             _runtime.SessionUpdate += RuntimeOnSessionUpdate;
+            _runtime.ApprovalModeChanged += RuntimeOnApprovalModeChanged;
+            _runtime.AutoApproved += RuntimeOnAutoApproved;
         }
 
         protected override async void OnLoad(EventArgs e)
@@ -123,6 +127,8 @@ namespace Ribbon.Vsto
             if (disposing)
             {
                 _runtime.SessionUpdate -= RuntimeOnSessionUpdate;
+                _runtime.ApprovalModeChanged -= RuntimeOnApprovalModeChanged;
+                _runtime.AutoApproved -= RuntimeOnAutoApproved;
                 _historySaveTimer.Stop();
                 PersistCurrentConversation();
                 _historySaveTimer.Dispose();
@@ -387,9 +393,10 @@ namespace Ribbon.Vsto
 
         private Control BuildFooter()
         {
-            _footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, BackColor = _palette.Background, Margin = new Padding(0) };
+            _footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 5, BackColor = _palette.Background, Margin = new Padding(0) };
             _footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 18));
             _footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            _footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 62));
             _footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82));
             _footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 86));
             _statusDot.Anchor = AnchorStyles.Left;
@@ -399,6 +406,12 @@ namespace Ribbon.Vsto
             _status.AutoEllipsis = true;
             _status.ForeColor = _palette.MutedText;
             _status.Font = new Font(Font.FontFamily, 8.25f, FontStyle.Regular);
+            _approvalModeToggle.Dock = DockStyle.Fill;
+            _approvalModeToggle.Margin = new Padding(2, 4, 2, 4);
+            _approvalModeToggle.Enabled = false;
+            _approvalModeToggle.Click += (sender, args) => CycleApprovalMode();
+            _approvalModeToggle.AccessibleName = "Approval mode";
+            _toolTip.SetToolTip(_approvalModeToggle, "Ask before each document change. Click to turn on Auto-approve for this agent session.");
             _cancel.Dock = DockStyle.Fill;
             _cancel.Margin = new Padding(2, 4, 4, 4);
             _cancel.Enabled = false;
@@ -410,8 +423,9 @@ namespace Ribbon.Vsto
             _send.AccessibleName = "Send prompt";
             _footer.Controls.Add(_statusDot, 0, 0);
             _footer.Controls.Add(_status, 1, 0);
-            _footer.Controls.Add(_cancel, 2, 0);
-            _footer.Controls.Add(_send, 3, 0);
+            _footer.Controls.Add(_approvalModeToggle, 2, 0);
+            _footer.Controls.Add(_cancel, 3, 0);
+            _footer.Controls.Add(_send, 4, 0);
             return _footer;
         }
 
@@ -438,6 +452,10 @@ namespace Ribbon.Vsto
                 _checkpointBar.ColumnStyles[2].Width = compact ? 76 : 84;
             }
             if (_checkpointLabel != null) _checkpointLabel.Visible = !compact;
+            if (_footer != null)
+            {
+                _footer.ColumnStyles[2].Width = compact ? 52 : 62;
+            }
             if (_composerHint != null)
             {
                 _composerHint.Text = compact ? "Ctrl + Enter to send" : "Ctrl + Enter to send  ·  Enter for a new line";
@@ -589,6 +607,7 @@ namespace Ribbon.Vsto
                 _sessionSupportsList = session.SupportsList;
                 ApplyConfigOptions(session.ConfigOptions);
                 UpdateConversationSession(session.SessionId, session.WorkingDirectory, session.SupportsLoad, session.SupportsResume, session.SupportsList);
+                RibbonUiThread.Run(this, () => _approvalModeToggle.Enabled = !_busy && !string.IsNullOrWhiteSpace(_sessionId));
             }
         }
 
@@ -843,6 +862,65 @@ namespace Ribbon.Vsto
             RibbonUiThread.Post(this, () => HandleSessionUpdate(update));
         }
 
+        private void RuntimeOnApprovalModeChanged(object sender, ApprovalMode mode)
+        {
+            RibbonUiThread.Post(this, () => ApplyApprovalModeCore(mode));
+        }
+
+        private void RuntimeOnAutoApproved(object sender, AutoApprovalRecord record)
+        {
+            RibbonUiThread.Post(this, () => AppendAutoApproval(record));
+        }
+
+        private void ApplyApprovalModeCore(ApprovalMode mode)
+        {
+            _approvalModeToggle.Text = mode == ApprovalMode.Auto ? "Auto" : "Ask";
+            _approvalModeToggle.Kind = mode == ApprovalMode.Auto ? RibbonButtonKind.Danger : RibbonButtonKind.Ghost;
+            _toolTip.SetToolTip(_approvalModeToggle, mode == ApprovalMode.Auto
+                ? "Auto-approve is on for this session. Click to turn it off and ask before each change."
+                : "Ask before each document change. Click to turn on Auto-approve for this agent session.");
+        }
+
+        private void AppendAutoApproval(AutoApprovalRecord record)
+        {
+            var action = record.Category == "acp" ? record.Action : FriendlyApprovalAction(record.Action);
+            var label = string.IsNullOrWhiteSpace(action) ? "document change" : action;
+            AppendTranscript(Environment.NewLine + "Auto-approved · " + label + "\n", _palette.Accent, FontStyle.Italic);
+        }
+
+        private static string FriendlyApprovalAction(string action)
+        {
+            if (string.IsNullOrWhiteSpace(action)) return "document change";
+            return action
+                .Replace("excel_", string.Empty)
+                .Replace("word_", string.Empty)
+                .Replace("powerpoint_", string.Empty)
+                .Replace('_', ' ');
+        }
+
+        private void CycleApprovalMode()
+        {
+            if (_busy) return;
+            var next = _runtime.ApprovalMode == ApprovalMode.Auto ? ApprovalMode.Ask : ApprovalMode.Auto;
+            if (next == ApprovalMode.Auto)
+            {
+                // Explicit opt-in for the session. This honors the security invariant that an
+                // allow choice is never selected automatically without user confirmation.
+                var answer = MessageBox.Show(
+                    this,
+                    "Turn on Auto-approve for this agent session?\r\n\r\n" +
+                    "Ribbon will allow every document-changing Office action and agent permission request without asking. " +
+                    "Each approved action is logged in this transcript, and you can still restore a checkpoint from the bar above.\r\n\r\n" +
+                    "Auto-approve turns off automatically when you start a new conversation, switch agents, or restart " + _hostKind + ".",
+                    "Ribbon · Auto-approve",
+                    MessageBoxButtons.OKCancel,
+                    MessageBoxIcon.Warning,
+                    MessageBoxDefaultButton.Button2);
+                if (answer != DialogResult.OK) return;
+            }
+            _runtime.SetApprovalMode(next);
+        }
+
         private void HandleSessionUpdate(SessionUpdateMessage update)
         {
             if (update.UpdateKind == "agent_message_chunk" && !string.IsNullOrEmpty(update.Text))
@@ -947,6 +1025,7 @@ namespace Ribbon.Vsto
                 _history.Enabled = !busy;
                 _checkpoints.Enabled = !busy && _checkpointItems.Count > 0;
                 _restoreCheckpoint.Enabled = !busy && _checkpointItems.Count > 0;
+                _approvalModeToggle.Enabled = !busy && !string.IsNullOrWhiteSpace(_sessionId);
                 if (busy) SetStatusCore("Agent is working…", _palette.Accent);
             });
         }

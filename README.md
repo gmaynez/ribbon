@@ -10,7 +10,7 @@ The result is one agent experience across Office without forcing Excel to automa
 - Install Windows binary and `npx` agent distributions. Ribbon provisions a private Node.js LTS runtime when needed and verifies the official Node archive checksum.
 - Launch ACP v1 agents, authenticate them, create sessions, and render message chunks, plans, thoughts, and tool progress inline while a turn runs.
 - Persist theme-independent conversation transcripts with generated titles, agent/model metadata, document binding, New chat, history browsing, and deletion. Ribbon restores native agent context through capability-gated ACP `session/resume` or `session/load`; unavailable and cross-document conversations remain safely reviewable.
-- Gate every destructive Office MCP tool in Ribbon as well as relaying ACP permission requests, with an option to remember an approval for that action during the active agent session.
+- Gate every destructive Office MCP tool in Ribbon as well as relaying ACP permission requests, with an option to remember an approval for that action during the active agent session. A per-session Auto-approve toggle in the task pane lets you pre-authorize document changes and agent requests for one session; it is off by default, resets to Ask on new conversations or restart, and logs every auto-approved action in the transcript.
 - Capture a local document checkpoint before each prompt and restore an earlier turn from the task pane; Ribbon saves a safety checkpoint first and restarts the agent session after restore.
 - Populate an agent-driven model selector from ACP session configuration options and keep it synchronized when the agent changes configuration.
 - Give every agent a local stdio MCP server named `ribbon-office`.
@@ -116,6 +116,8 @@ msbuild Ribbon.slnx /t:Build /p:Configuration=Debug /m
 
 The VSTO builds include `Ribbon.Broker.exe` and its runtime files in each deployment manifest. During repository development the shared client can also locate the broker under `Ribbon.Broker/bin`; `RIBBON_BROKER_PATH` overrides this lookup.
 
+Signed GitHub Releases are created from semantic-version tags such as `v1.2.0` when the tagged commit belongs to `main`. See [docs/releasing.md](docs/releasing.md) for signing-secret setup, release steps, artifact contents, and the Microsoft Marketplace distribution constraint for VSTO add-ins.
+
 To try Ribbon, set `Grid`, `Quill`, or `Deck` as the startup project and press **F5**. In the corresponding host-branded Ribbon task pane:
 
 1. Select **Agents**.
@@ -143,4 +145,4 @@ Agent state is stored under `%LOCALAPPDATA%\Ribbon`:
 
 ## Scope and next work
 
-This is a working architectural slice, not yet a production installer. The next useful increments are tracked-changes and image/section support for Word, conditional formatting and sorting for Excel, a selectable authentication-method dialog, signed release packaging with a .NET runtime prerequisite or self-contained broker, and automated integration tests with a fake ACP agent.
+This is a working architectural slice, not yet a production installer. The next useful increments are tracked-changes and image/section support for Word, conditional formatting and sorting for Excel, a selectable authentication-method dialog, a production installer with Authenticode-signed binaries and a .NET runtime prerequisite or self-contained broker, and automated integration tests with a fake ACP agent.
