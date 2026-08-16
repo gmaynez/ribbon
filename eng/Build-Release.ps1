@@ -224,7 +224,10 @@ if (-not $SkipInstaller) {
     ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
     if (-not $iscc) {
         $isccCommand = Get-Command iscc -ErrorAction SilentlyContinue
-        if ($isccCommand) { $iscc = $isccCommand.Source }
+        if ($isccCommand) {
+            $isccVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($isccCommand.Source)
+            if ($isccVersion.ProductMajorPart -ge 7) { $iscc = $isccCommand.Source }
+        }
     }
     if (-not $iscc) {
         throw "Inno Setup 7 compiler was not found. Install the 64-bit edition from https://jrsoftware.org/isinfo.php or pass -SkipInstaller."

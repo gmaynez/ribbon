@@ -48,13 +48,13 @@ For a local packaging check, use the explicit development-only switch. This reli
 .\eng\Build-Release.ps1 -Version 1.2.0 -UseProjectSigningSettings
 ```
 
-Inno Setup 6.7 or later must be installed to compile `eng\Ribbon.iss`. The build also recognizes the 64-bit Inno Setup 7 compiler when available (`%ProgramFiles%\Inno Setup 7\ISCC.exe`). Pass `-SkipInstaller` to produce only the host ZIP files.
+Inno Setup 7.1 or later must be installed to compile `eng\Ribbon.iss`; the 64-bit compiler is preferred (`%ProgramFiles%\Inno Setup 7\ISCC.exe`). The release workflow downloads a pinned, signature-checked compiler from the official Inno Setup GitHub release. Pass `-SkipInstaller` to produce only the host ZIP files.
 
 Output signed with a local or workflow-generated development certificate is for testing only. Windows and Office will identify its publisher as untrusted, and it must not be represented as a stable Ribbon release.
 
 ## End-user installer
 
-`Ribbon-Setup-vVERSION.exe` is a 64-bit per-user Inno Setup package (`SetupArchitecture=x64`, `PrivilegesRequired=lowest`). The wizard presents the Apache 2.0 `LICENSE` for acceptance before component selection. It installs to `%LOCALAPPDATA%\Ribbon` without administrator rights:
+`Ribbon-Setup-vVERSION.exe` is a 64-bit per-user Inno Setup 7 package (`SetupArchitecture=x64`, `PrivilegesRequired=lowest`). The wizard presents the Apache 2.0 `LICENSE` for acceptance before component selection. It installs to `%LOCALAPPDATA%\Ribbon` without administrator rights:
 
 | Path | Contents |
 | --- | --- |
