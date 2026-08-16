@@ -1,0 +1,145 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v1.*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and release
+    runs-on: windows-2025
+    timeout-minutes: 30
+    environment: release
+
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate the release tag and main ancestry
+        id: release
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          if ($env:RELEASE_TAG -notmatch '^v1\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$') {
+            throw "Release tags must use v1.MINOR.PATCH form, for example v1.2.0 or v1.2.0-rc.1. Received '$env:RELEASE_TAG'."
+          }
+
+          git show-ref --verify --quiet refs/remotes/origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'The checkout did not include origin/main.' }
+
+          $tagCommit = (git rev-list -n 1 "refs/tags/$env:RELEASE_TAG").Trim()
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($tagCommit)) {
+            throw "Could not resolve tag '$env:RELEASE_TAG'."
+          }
+
+          git merge-base --is-ancestor $tagCommit origin/main
+          if ($LASTEXITCODE -ne 0) {
+            throw "Tag '$env:RELEASE_TAG' does not point to a commit contained in origin/main."
+          }
+
+          "version=$($env:RELEASE_TAG.Substring(1))" | Add-Content -Path $env:GITHUB_OUTPUT
+          "prerelease=$($env:RELEASE_TAG.Contains('-').ToString().ToLowerInvariant())" | Add-Content -Path $env:GITHUB_OUTPUT
+
+      - name: Import the release-signing certificate
+        id: certificate
+        shell: pwsh
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.RIBBON_SIGNING_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.RIBBON_SIGNING_CERTIFICATE_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          if ([string]::IsNullOrWhiteSpace($env:CERTIFICATE_BASE64) -or
+              [string]::IsNullOrWhiteSpace($env:CERTIFICATE_PASSWORD)) {
+            throw 'Configure RIBBON_SIGNING_CERTIFICATE_BASE64 and RIBBON_SIGNING_CERTIFICATE_PASSWORD in the release environment before creating a release tag.'
+          }
+
+          $bytes = [Convert]::FromBase64String($env:CERTIFICATE_BASE64)
+          $flags = [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::PersistKeySet -bor
+                   [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::UserKeySet
+          $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
+            $bytes,
+            $env:CERTIFICATE_PASSWORD,
+            $flags)
+
+          if (-not $certificate.HasPrivateKey) {
+            throw 'The release-signing certificate does not contain a private key.'
+          }
+
+          $store = [System.Security.Cryptography.X509Certificates.X509Store]::new(
+            [System.Security.Cryptography.X509Certificates.StoreName]::My,
+            [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
+          try {
+            $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+            $store.Add($certificate)
+          }
+          finally {
+            $store.Dispose()
+          }
+
+          "RIBBON_CERT_THUMBPRINT=$($certificate.Thumbprint)" | Add-Content -Path $env:GITHUB_ENV
+          "thumbprint=$($certificate.Thumbprint)" | Add-Content -Path $env:GITHUB_OUTPUT
+          $certificate.Dispose()
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installation failed.' }
+
+      - name: Build, test, and package
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          .\eng\Build-Release.ps1 `
+            -Version $env:RELEASE_VERSION `
+            -CertificateThumbprint $env:RIBBON_CERT_THUMBPRINT
+
+      - name: Create the GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          IS_PRERELEASE: ${{ steps.release.outputs.prerelease }}
+        run: |
+          $assets = Get-ChildItem 'artifacts\release' -File |
+            Sort-Object Name |
+            ForEach-Object FullName
+
+          $arguments = @(
+            'release', 'create', $env:RELEASE_TAG,
+            '--verify-tag',
+            '--title', "Ribbon $env:RELEASE_TAG",
+            '--generate-notes'
+          )
+          if ($env:IS_PRERELEASE -eq 'true') { $arguments += '--prerelease' }
+          $arguments += $assets
+
+          gh @arguments
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub release creation failed.' }
+
+      - name: Remove the signing certificate
+        if: always() && steps.certificate.outputs.thumbprint != ''
+        shell: pwsh
+        env:
+          CERTIFICATE_THUMBPRINT: ${{ steps.certificate.outputs.thumbprint }}
+        run: |
+          $path = "Cert:\CurrentUser\My\$env:CERTIFICATE_THUMBPRINT"
+          if (Test-Path -LiteralPath $path) {
+            Remove-Item -LiteralPath $path -Force
+          }

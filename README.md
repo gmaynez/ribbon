@@ -107,6 +107,7 @@ Requirements:
 - Visual Studio with **Office/SharePoint development** tools
 - .NET Framework 4.8 targeting pack
 - .NET 10 runtime for the broker
+- [Inno Setup 6](https://jrsoftware.org/isinfo.php) to compile the per-user installer
 
 Build the complete solution from a Visual Studio developer shell:
 
@@ -114,9 +115,9 @@ Build the complete solution from a Visual Studio developer shell:
 msbuild Ribbon.slnx /t:Build /p:Configuration=Debug /m
 ```
 
-The VSTO builds include `Ribbon.Broker.exe` and its runtime files in each deployment manifest. During repository development the shared client can also locate the broker under `Ribbon.Broker/bin`; `RIBBON_BROKER_PATH` overrides this lookup.
+The VSTO builds include `Ribbon.Broker.exe` and its runtime files in each deployment manifest. An installed copy prefers `%LOCALAPPDATA%\Ribbon\Broker\Ribbon.Broker.exe`. During repository development the shared client can also locate the broker under `Ribbon.Broker/bin`; `RIBBON_BROKER_PATH` overrides this lookup.
 
-Signed GitHub Releases are created from semantic-version tags such as `v1.2.0` when the tagged commit belongs to `main`. See [docs/releasing.md](docs/releasing.md) for signing-secret setup, release steps, artifact contents, and the Microsoft Marketplace distribution constraint for VSTO add-ins.
+Signed GitHub Releases are created from semantic-version tags such as `v1.2.0` when the tagged commit belongs to `main`. End users should run `Ribbon-Setup-vVERSION.exe` from the release. See [docs/releasing.md](docs/releasing.md) for signing-secret setup, the Inno Setup package, artifact contents, and the Microsoft Marketplace distribution constraint for VSTO add-ins.
 
 To try Ribbon, set `Grid`, `Quill`, or `Deck` as the startup project and press **F5**. In the corresponding host-branded Ribbon task pane:
 
@@ -145,4 +146,4 @@ Agent state is stored under `%LOCALAPPDATA%\Ribbon`:
 
 ## Scope and next work
 
-This is a working architectural slice, not yet a production installer. The next useful increments are tracked-changes and image/section support for Word, conditional formatting and sorting for Excel, a selectable authentication-method dialog, a production installer with Authenticode-signed binaries and a .NET runtime prerequisite or self-contained broker, and automated integration tests with a fake ACP agent.
+This is a working architectural slice. The next useful increments are tracked-changes and image/section support for Word, conditional formatting and sorting for Excel, a selectable authentication-method dialog, Authenticode-signing the setup executable with a trusted publisher certificate, and automated integration tests with a fake ACP agent.

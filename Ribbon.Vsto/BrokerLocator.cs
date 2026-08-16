@@ -29,6 +29,12 @@ namespace Ribbon.Vsto
             }
 
             var baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
+            var shared = Path.GetFullPath(Path.Combine(baseDirectory, "..", "Broker", "Ribbon.Broker.exe"));
+            if (File.Exists(shared))
+            {
+                return shared;
+            }
+
             var deployed = Path.Combine(baseDirectory, "Ribbon.Broker.exe");
             if (File.Exists(deployed))
             {

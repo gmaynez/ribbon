@@ -45,6 +45,18 @@ One primary Ribbon Broker process is expected while at least one Office host is 
 
 COM calls never run on the broker thread. Each host adapter dispatches work back to the synchronization context captured during VSTO startup.
 
+## End-user installation
+
+Ribbon ships as a per-user Inno Setup installer, not as a Microsoft Marketplace add-in. VSTO and COM add-ins cannot be submitted to the store.
+
+The installer writes to `%LOCALAPPDATA%\Ribbon` without administrator rights:
+
+- `Grid`, `Quill`, and `Deck` hold the VSTO payloads. HKCU add-in keys point at each host's `.vsto` with `|vstolocal`.
+- `Broker` holds one self-contained `Ribbon.Broker.exe`. Each add-in prefers that sibling process over the framework-dependent copy next to its own DLL.
+- `agents`, `runtimes`, `sessions`, `Conversations`, `Checkpoints`, `cache`, and `logs` remain runtime data. Uninstall removes only the payload folders and VSTO keys.
+
+`RIBBON_BROKER_PATH` still overrides locator search for development.
+
 ## Registry and installation
 
 Ribbon consumes the public ACP Registry document and supports these Windows distributions:
