@@ -8,7 +8,7 @@ Ribbon releases are built by `.github/workflows/release.yml`. The workflow runs 
 - The tagged commit must be contained in `origin/main`. A matching tag on another branch fails before the build.
 - The workflow performs a complete Release build, runs the broker tests, verifies that each VSTO application manifest includes the broker runtime files, and refuses to publish unsigned manifests.
 - It then publishes a self-contained `win-x64` broker and compiles the per-user Inno Setup installer.
-- The GitHub Release contains `Ribbon-Setup-vVERSION.exe`, separate Grid, Quill, and Deck ZIP files, and `SHA256SUMS.txt`.
+- The GitHub Release contains `Ribbon-Setup-vVERSION.exe`, separate Grid, Quill, Deck, and Post ZIP files, and `SHA256SUMS.txt`.
 
 ## One-time GitHub configuration
 
@@ -53,22 +53,26 @@ Output signed with a local development certificate is for pipeline development o
 
 ## End-user installer
 
-`Ribbon-Setup-vVERSION.exe` is a 64-bit per-user Inno Setup 7 package (`SetupArchitecture=x64`, `PrivilegesRequired=lowest`). It installs to `%LOCALAPPDATA%\Ribbon` without administrator rights:
+`Ribbon-Setup-vVERSION.exe` is a 64-bit per-user Inno Setup 7 package (`SetupArchitecture=x64`, `PrivilegesRequired=lowest`). The wizard presents the Apache 2.0 `LICENSE` for acceptance before component selection. It installs to `%LOCALAPPDATA%\Ribbon` without administrator rights:
 
 | Path | Contents |
 | --- | --- |
-| `Grid\`, `Quill\`, `Deck\` | Signed VSTO payloads, including the four broker files listed in each application manifest |
+| `Grid\`, `Quill\`, `Deck\`, `Post\` | Signed VSTO payloads, including the four broker files listed in each application manifest |
 | `Broker\` | Self-contained `Ribbon.Broker.exe` used by every host |
 
-The installer writes HKCU VSTO keys (`LoadBehavior=3`) whose `Manifest` values use `file:///{app}/<host>/<host>.vsto|vstolocal`. Uninstall removes those keys and the payload folders. It does not delete conversations, downloaded agents, sessions, cache, logs, or checkpoints.
+Prerequisites: the VSTO add-ins need Microsoft .NET Framework 4.8 (included with Windows 10 since the May 2019 Update) and the Microsoft Visual Studio 2010 Tools for Office runtime. Setup checks both and warns with a continue-or-cancel prompt when either is missing. A separate .NET 10 installation is not required because the installed broker is self-contained.
 
-Close Excel, Word, PowerPoint, and `Ribbon.Broker.exe` before an upgrade. The setup stops the broker process itself when it can.
+The installer offers component selection. The broker is a fixed, required component; Grid, Quill, Deck, and Post are individually selectable and checked by default. Post is only useful with classic desktop Outlook: the new Outlook is a WebView-based client that cannot load VSTO add-ins. During setup, Ribbon resolves `outlook.exe` through App Paths in both registry hives and views and accepts it only when the resolved executable really is `OUTLOOK.EXE`. If the user has switched to the new Outlook (`HKCU\Software\Microsoft\Office\16.0\Outlook\Preferences\NewOutlook = 1`) or an administrator forced that migration through policy, Post is left unselected with an explanatory message, and manually re-selecting it asks for confirmation.
+
+The installer writes HKCU VSTO keys (`LoadBehavior=3`) whose `Manifest` values use `file:///{app}/<host>/<host>.vsto|vstolocal`. Keys and folders are written and removed only for the components selected during install. Uninstall does not delete conversations, downloaded agents, sessions, cache, logs, or checkpoints.
+
+Close Excel, Word, PowerPoint, classic Outlook, and `Ribbon.Broker.exe` before an upgrade. The setup stops the broker process itself when it can.
 
 A later MSI can wrap the same payload for Intune or GPO. VSTO add-ins still cannot be submitted to Microsoft Marketplace.
 
 ## Microsoft Marketplace
 
-Ribbon's current Excel, Word, and PowerPoint add-ins are VSTO add-ins. Microsoft states that Office VSTO and COM add-ins cannot be submitted to Microsoft Marketplace, so this repository cannot add a Store-publication stage for the current products. Distribute the signed VSTO packages directly or through an organization-managed Windows deployment channel.
+Ribbon's current Excel, Word, PowerPoint, and Outlook add-ins are VSTO add-ins. Microsoft states that Office VSTO and COM add-ins cannot be submitted to Microsoft Marketplace, so this repository cannot add a Store-publication stage for the current products. Distribute the signed VSTO packages directly or through an organization-managed Windows deployment channel.
 
 Publishing inside Office would require a separate Office Web Add-in with a supported manifest and cross-platform implementation. That product could be submitted through Partner Center, but Microsoft currently states that Microsoft 365 Office add-ins do not have submission API support, so certification submission cannot be automated by this GitHub workflow.
 

@@ -51,10 +51,24 @@ if (-not (Test-Path -LiteralPath $vswhere)) {
     throw "Visual Studio locator was not found at '$vswhere'."
 }
 
-$msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' |
-    Select-Object -First 1
-if ([string]::IsNullOrWhiteSpace($msbuild) -or -not (Test-Path -LiteralPath $msbuild)) {
-    throw 'Visual Studio MSBuild was not found.'
+# Probe every Visual Studio instance instead of trusting -latest: a Build Tools
+# instance without the Office (VSTO) targets resolves first on machines that
+# also have a full IDE, and cannot build this solution. SDK-style projects
+# resolve Microsoft.NET.Sdk through the standalone dotnet resolvers, so only
+# the VSTO targets discriminate here.
+$msbuild = $null
+$msbuildCandidates = @(& $vswhere -products * -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe')
+foreach ($candidate in $msbuildCandidates) {
+    if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
+    $msbuildRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $candidate))
+    $hasVstoTargets = [bool](Get-ChildItem -LiteralPath (Join-Path $msbuildRoot 'Microsoft\VisualStudio') -Filter 'Microsoft.VisualStudio.Tools.Office.targets' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1)
+    if ($hasVstoTargets) {
+        $msbuild = $candidate
+        break
+    }
+}
+if ([string]::IsNullOrWhiteSpace($msbuild)) {
+    throw 'No Visual Studio instance provides the Office (VSTO) build targets. Install Visual Studio with the Office/SharePoint development workload (VSTO tools).'
 }
 
 $buildProperties = @(
@@ -98,7 +112,7 @@ $requiredBrokerFiles = @(
     'Ribbon.Broker.deps.json',
     'Ribbon.Broker.runtimeconfig.json'
 )
-$hosts = @('Grid', 'Quill', 'Deck')
+$hosts = @('Grid', 'Quill', 'Deck', 'Post')
 $contractsAssembly = Join-Path $repositoryRoot "Ribbon.Contracts\bin\$Configuration\netstandard2.0\Ribbon.Contracts.dll"
 if (-not (Test-Path -LiteralPath $contractsAssembly -PathType Leaf)) {
     throw "Expected release file '$contractsAssembly' was not produced."

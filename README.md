@@ -133,7 +133,7 @@ The VSTO builds include `Ribbon.Broker.exe` and its runtime files in each deploy
 
 Signed GitHub Releases are created from semantic-version tags such as `v1.2.0` when the tagged commit belongs to `main`. End users should run `Ribbon-Setup-vVERSION.exe` from the release. See [docs/releasing.md](docs/releasing.md) for signing-secret setup, the Inno Setup package, artifact contents, and the Microsoft Marketplace distribution constraint for VSTO add-ins.
 
-To try Ribbon, set `Grid`, `Quill`, or `Deck` as the startup project and press **F5**. In the corresponding host-branded Ribbon task pane:
+To try Ribbon, set `Grid`, `Quill`, `Deck`, or `Post` as the startup project and press **F5**. In the corresponding host-branded Ribbon task pane:
 
 1. Select **Agents**.
 2. Install a compatible agent such as OpenCode or Codex.
