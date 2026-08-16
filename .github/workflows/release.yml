@@ -61,8 +61,14 @@ jobs:
 
           $installer = Join-Path $env:RUNNER_TEMP 'vstor_redist.exe'
           Invoke-WebRequest `
-            -Uri 'https://go.microsoft.com/fwlink/?linkid=140384' `
+            -Uri 'https://download.microsoft.com/download/5/d/2/5d24f8f8-efbb-4b63-aa33-3785e3104713/vstor_redist.exe' `
             -OutFile $installer
+
+          $expectedHash = 'CFE1A40BBE4A50022DB2164ABDB0154984E2CECB761A23CDC81CB5754F6E0A18'
+          $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash
+          if ($actualHash -ne $expectedHash) {
+            throw "The VSTO runtime installer hash did not match the pinned Microsoft download. Actual: $actualHash."
+          }
 
           $signature = Get-AuthenticodeSignature -LiteralPath $installer
           if ($signature.Status -ne 'Valid' -or
