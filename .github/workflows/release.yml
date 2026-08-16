@@ -15,7 +15,7 @@ concurrency:
 jobs:
   release:
     name: Build and release
-    runs-on: windows-2025
+    runs-on: windows-2025-vs2026
     timeout-minutes: 30
     environment: release
 
@@ -54,41 +54,106 @@ jobs:
           "version=$($env:RELEASE_TAG.Substring(1))" | Add-Content -Path $env:GITHUB_OUTPUT
           "prerelease=$($env:RELEASE_TAG.Contains('-').ToString().ToLowerInvariant())" | Add-Content -Path $env:GITHUB_OUTPUT
 
+      - name: Install and verify the VSTO runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $installer = Join-Path $env:RUNNER_TEMP 'vstor_redist.exe'
+          Invoke-WebRequest `
+            -Uri 'https://download.microsoft.com/download/5/d/2/5d24f8f8-efbb-4b63-aa33-3785e3104713/vstor_redist.exe' `
+            -OutFile $installer
+
+          $expectedHash = 'CFE1A40BBE4A50022DB2164ABDB0154984E2CECB761A23CDC81CB5754F6E0A18'
+          $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash
+          if ($actualHash -ne $expectedHash) {
+            throw "The VSTO runtime installer hash did not match the pinned Microsoft download. Actual: $actualHash."
+          }
+
+          $signature = Get-AuthenticodeSignature -LiteralPath $installer
+          if ($signature.Status -ne 'Valid' -or
+              $signature.SignerCertificate.Subject -notmatch '(^|, )O=Microsoft Corporation(,|$)') {
+            throw "The VSTO runtime installer did not have a valid Microsoft signature: $($signature.Status)."
+          }
+
+          $process = Start-Process `
+            -FilePath $installer `
+            -ArgumentList '/quiet', '/norestart' `
+            -Wait `
+            -PassThru
+          if ($process.ExitCode -notin @(0, 1638, 3010)) {
+            throw "The VSTO runtime installer failed with exit code $($process.ExitCode)."
+          }
+
+          $frameworkPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          & $frameworkPowerShell -NoLogo -NoProfile -NonInteractive -Command @'
+          [Reflection.Assembly]::Load(
+            'Microsoft.VisualStudio.Tools.Applications.Hosting, Version=10.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a') | Out-Null
+          '@
+          if ($LASTEXITCODE -ne 0) {
+            throw 'The VSTO Hosting assembly is still unavailable to .NET Framework after installing the runtime.'
+          }
+
       - name: Import the release-signing certificate
         id: certificate
         shell: pwsh
         env:
           CERTIFICATE_BASE64: ${{ secrets.RIBBON_SIGNING_CERTIFICATE_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.RIBBON_SIGNING_CERTIFICATE_PASSWORD }}
+          IS_PRERELEASE: ${{ steps.release.outputs.prerelease }}
         run: |
           $ErrorActionPreference = 'Stop'
 
-          if ([string]::IsNullOrWhiteSpace($env:CERTIFICATE_BASE64) -or
-              [string]::IsNullOrWhiteSpace($env:CERTIFICATE_PASSWORD)) {
-            throw 'Configure RIBBON_SIGNING_CERTIFICATE_BASE64 and RIBBON_SIGNING_CERTIFICATE_PASSWORD in the release environment before creating a release tag.'
+          $hasCertificate = -not [string]::IsNullOrWhiteSpace($env:CERTIFICATE_BASE64)
+          $hasPassword = -not [string]::IsNullOrWhiteSpace($env:CERTIFICATE_PASSWORD)
+          if ($hasCertificate -ne $hasPassword) {
+            throw 'Configure both release-signing secrets or leave both unset.'
           }
 
-          $bytes = [Convert]::FromBase64String($env:CERTIFICATE_BASE64)
-          $flags = [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::PersistKeySet -bor
-                   [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::UserKeySet
-          $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
-            $bytes,
-            $env:CERTIFICATE_PASSWORD,
-            $flags)
+          if ($hasCertificate) {
+            $bytes = [Convert]::FromBase64String($env:CERTIFICATE_BASE64)
+            $flags = [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::PersistKeySet -bor
+                     [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::UserKeySet
+            $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
+              $bytes,
+              $env:CERTIFICATE_PASSWORD,
+              $flags)
+
+            if (-not $certificate.HasPrivateKey) {
+              throw 'The release-signing certificate does not contain a private key.'
+            }
+
+            $store = [System.Security.Cryptography.X509Certificates.X509Store]::new(
+              [System.Security.Cryptography.X509Certificates.StoreName]::My,
+              [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
+            try {
+              $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+              $store.Add($certificate)
+            }
+            finally {
+              $store.Dispose()
+            }
+            'development=false' | Add-Content -Path $env:GITHUB_OUTPUT
+          }
+          elseif ($env:IS_PRERELEASE -eq 'true') {
+            $certificate = New-SelfSignedCertificate `
+              -Type CodeSigningCert `
+              -Subject 'CN=Ribbon Prerelease Test Build' `
+              -FriendlyName 'Ribbon Prerelease Test Build' `
+              -CertStoreLocation 'Cert:\CurrentUser\My' `
+              -KeyAlgorithm RSA `
+              -KeyLength 2048 `
+              -HashAlgorithm SHA256 `
+              -KeyExportPolicy NonExportable `
+              -NotAfter (Get-Date).AddDays(30)
+            'development=true' | Add-Content -Path $env:GITHUB_OUTPUT
+          }
+          else {
+            throw 'Stable releases require RIBBON_SIGNING_CERTIFICATE_BASE64 and RIBBON_SIGNING_CERTIFICATE_PASSWORD in the release environment.'
+          }
 
           if (-not $certificate.HasPrivateKey) {
             throw 'The release-signing certificate does not contain a private key.'
-          }
-
-          $store = [System.Security.Cryptography.X509Certificates.X509Store]::new(
-            [System.Security.Cryptography.X509Certificates.StoreName]::My,
-            [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
-          try {
-            $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-            $store.Add($certificate)
-          }
-          finally {
-            $store.Dispose()
           }
 
           "RIBBON_CERT_THUMBPRINT=$($certificate.Thumbprint)" | Add-Content -Path $env:GITHUB_ENV
@@ -98,8 +163,37 @@ jobs:
       - name: Install Inno Setup
         shell: pwsh
         run: |
-          choco install innosetup --no-progress -y
-          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installation failed.' }
+          $ErrorActionPreference = 'Stop'
+
+          $installer = Join-Path $env:RUNNER_TEMP 'innosetup-7.1.0-x64.exe'
+          Invoke-WebRequest `
+            -Uri 'https://github.com/jrsoftware/issrc/releases/download/is-7_1_0/innosetup-7.1.0-x64.exe' `
+            -OutFile $installer
+
+          $expectedHash = '0362A383ED217D4C4239B5933866DD96D3EB2102737DA92F80F6057A4B40DF2F'
+          $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash
+          if ($actualHash -ne $expectedHash) {
+            throw "The Inno Setup installer hash did not match the pinned release. Actual: $actualHash."
+          }
+
+          $signature = Get-AuthenticodeSignature -LiteralPath $installer
+          if ($signature.Status -ne 'Valid' -or
+              $signature.SignerCertificate.Subject -notmatch '(^|, )O=Pyrsys B\.V\.(,|$)') {
+            throw "The Inno Setup installer did not have a valid Pyrsys B.V. signature: $($signature.Status)."
+          }
+
+          $process = Start-Process `
+            -FilePath $installer `
+            -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/ALLUSERS' `
+            -Wait `
+            -PassThru
+          if ($process.ExitCode -notin @(0, 3010)) {
+            throw "Inno Setup installation failed with exit code $($process.ExitCode)."
+          }
+
+          if (-not (Test-Path -LiteralPath "$env:ProgramFiles\Inno Setup 7\ISCC.exe")) {
+            throw 'The Inno Setup 7 compiler was not installed at the expected location.'
+          }
 
       - name: Build, test, and package
         shell: pwsh
@@ -116,6 +210,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
           IS_PRERELEASE: ${{ steps.release.outputs.prerelease }}
+          IS_DEVELOPMENT_SIGNING: ${{ steps.certificate.outputs.development }}
         run: |
           $assets = Get-ChildItem 'artifacts\release' -File |
             Sort-Object Name |
@@ -128,6 +223,12 @@ jobs:
             '--generate-notes'
           )
           if ($env:IS_PRERELEASE -eq 'true') { $arguments += '--prerelease' }
+          if ($env:IS_DEVELOPMENT_SIGNING -eq 'true') {
+            $arguments += @(
+              '--notes',
+              "> [!WARNING]`n> This prerelease is signed with a temporary self-signed certificate. Windows and Office will show an untrusted publisher warning. Use it only for testing."
+            )
+          }
           $arguments += $assets
 
           gh @arguments
