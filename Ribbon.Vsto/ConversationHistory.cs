@@ -76,18 +76,19 @@ namespace Ribbon.Vsto
             var path = registration.DocumentPath ?? string.Empty;
             record.HostId = registration.HostId ?? record.HostId ?? string.Empty;
             record.HostKind = registration.HostKind ?? record.HostKind ?? string.Empty;
-            record.DocumentId = registration.DocumentId ?? record.DocumentId ?? string.Empty;
+            record.DocumentId = registration.ContextId ?? registration.DocumentId ?? record.DocumentId ?? string.Empty;
             record.DocumentPath = path;
-            record.DocumentName = DocumentName(path, record.HostKind);
+            record.DocumentName = DocumentName(path, registration.ContextName, record.HostKind);
             record.DocumentKey = GetDocumentKey(registration);
         }
 
         public static bool MatchesCurrentDocument(ConversationRecord record, HostRegistration registration)
         {
             if (record == null || registration == null) return false;
+            var contextId = registration.ContextId ?? registration.DocumentId;
             if (string.Equals(record.HostId, registration.HostId, StringComparison.OrdinalIgnoreCase)
                 && !string.IsNullOrWhiteSpace(record.DocumentId)
-                && string.Equals(record.DocumentId, registration.DocumentId, StringComparison.Ordinal))
+                && string.Equals(record.DocumentId, contextId, StringComparison.Ordinal))
             {
                 return true;
             }
@@ -105,9 +106,13 @@ namespace Ribbon.Vsto
         {
             if (registration == null) return string.Empty;
             var stablePath = StableDocumentPath(registration.DocumentPath);
-            return !string.IsNullOrWhiteSpace(stablePath)
-                ? (registration.HostKind ?? string.Empty) + "|path|" + stablePath
-                : (registration.HostKind ?? string.Empty) + "|document|" + (registration.DocumentId ?? registration.HostId ?? string.Empty);
+            if (!string.IsNullOrWhiteSpace(stablePath))
+            {
+                return (registration.HostKind ?? string.Empty) + "|path|" + stablePath;
+            }
+            var contextId = registration.ContextId ?? registration.DocumentId ?? registration.HostId ?? string.Empty;
+            var contextKind = string.IsNullOrWhiteSpace(registration.ContextKind) ? "document" : registration.ContextKind;
+            return (registration.HostKind ?? string.Empty) + "|" + contextKind + "|" + contextId;
         }
 
         public static IList<ConversationRecord> LoadAll()
@@ -195,7 +200,7 @@ namespace Ribbon.Vsto
             }
         }
 
-        private static string DocumentName(string path, string hostKind)
+        private static string DocumentName(string path, string contextName, string hostKind)
         {
             try
             {
@@ -204,6 +209,7 @@ namespace Ribbon.Vsto
             catch
             {
             }
+            if (!string.IsNullOrWhiteSpace(contextName)) return contextName;
             return string.IsNullOrWhiteSpace(hostKind) ? "Office document" : "Unsaved " + hostKind + " document";
         }
 

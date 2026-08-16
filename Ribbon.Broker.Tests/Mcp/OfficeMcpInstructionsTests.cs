@@ -77,12 +77,87 @@ public sealed class OfficeMcpInstructionsTests
     [Fact]
     public void UnknownToolsReceiveGenericGuidanceWithoutInventedHostCalls()
     {
-        var instructions = OfficeMcpInstructions.Build(Tools("outlook_read_message"));
+        var instructions = OfficeMcpInstructions.Build(Tools("onenote_read_page"));
 
         Assert.Contains("Additional connected Office tools", instructions);
         Assert.DoesNotContain("Excel workflow", instructions);
         Assert.DoesNotContain("Word workflow", instructions);
         Assert.DoesNotContain("PowerPoint workflow", instructions);
+        Assert.DoesNotContain("Outlook workflow", instructions);
+    }
+
+    [Fact]
+    public void OutlookOnlyCatalogExplainsMailboxDisciplineAndIrreversibleSend()
+    {
+        var definitions = Tools(
+            "outlook_get_context",
+            "outlook_list_folders",
+            "outlook_list_items",
+            "outlook_read_item",
+            "outlook_create_draft",
+            "outlook_update_draft",
+            "outlook_delete_draft",
+            "outlook_send_draft");
+        definitions.Single(definition => definition.Name == "outlook_send_draft").Irreversible = true;
+
+        var instructions = OfficeMcpInstructions.Build(definitions);
+
+        Assert.Contains("Outlook workflow", instructions);
+        Assert.Contains("no document checkpoints", instructions);
+        Assert.Contains("outlook_list_folders", instructions);
+        Assert.Contains("entry_id", instructions);
+        Assert.Contains("irreversible", instructions);
+        Assert.Contains("outlook_send_draft", instructions);
+        Assert.DoesNotContain("Excel workflow", instructions);
+        Assert.DoesNotContain("Word workflow", instructions);
+        Assert.DoesNotContain("PowerPoint workflow", instructions);
+    }
+
+    [Fact]
+    public void OutlookReadOnlyCatalogOmitsSendAndDraftGuidance()
+    {
+        var instructions = OfficeMcpInstructions.Build(Tools("outlook_get_context", "outlook_list_folders", "outlook_list_items", "outlook_read_item"));
+
+        Assert.Contains("Outlook workflow", instructions);
+        Assert.Contains("outlook_read_item", instructions);
+        Assert.DoesNotContain("outlook_send_draft", instructions);
+        Assert.DoesNotContain("outlook_create_draft", instructions);
+        Assert.DoesNotContain("Compose email in stages", instructions);
+    }
+
+    [Fact]
+    public void MixedExcelAndOutlookCatalogKeepsFirstSeenHostOrder()
+    {
+        var definitions = Tools(
+            "outlook_get_context",
+            "outlook_read_item",
+            "excel_get_context",
+            "excel_read_range");
+
+        var instructions = OfficeMcpInstructions.Build(definitions);
+
+        Assert.True(instructions.IndexOf("Outlook workflow", StringComparison.Ordinal) < instructions.IndexOf("Excel workflow", StringComparison.Ordinal));
+        Assert.Equal(1, Count(instructions, "Outlook workflow"));
+        Assert.Equal(1, Count(instructions, "Excel workflow"));
+        Assert.DoesNotContain("Word workflow", instructions);
+    }
+
+    [Fact]
+    public void IrreversibleToolsAreAlwaysCalledOut()
+    {
+        var withIrreversible = OfficeMcpInstructions.Build(
+        [
+            new OfficeToolDefinition { Name = "outlook_create_draft", Destructive = true },
+            new OfficeToolDefinition { Name = "outlook_send_draft", Destructive = true, Irreversible = true }
+        ]);
+        var withoutIrreversible = OfficeMcpInstructions.Build(
+        [
+            new OfficeToolDefinition { Name = "outlook_create_draft", Destructive = true },
+            new OfficeToolDefinition { Name = "outlook_update_draft", Destructive = true }
+        ]);
+
+        Assert.Contains("Irreversible actions that no Ribbon checkpoint can undo: outlook_send_draft.", withIrreversible);
+        Assert.DoesNotContain("Irreversible actions", withoutIrreversible);
     }
 
     [Fact]

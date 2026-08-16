@@ -1,22 +1,24 @@
 # Ribbon architecture
 
-## Why three add-ins and one broker
+## Why four add-ins and one broker
 
 VSTO add-ins run inside their Office host and can use the full COM object model. That is the control surface Ribbon needs, but an in-process add-in is a poor place to download runtimes, launch arbitrary agent processes, or own long-running protocol sessions.
 
 Ribbon therefore separates host access from agent infrastructure:
 
-- `Grid`, `Quill`, and `Deck` are independent VSTO deployment units because Office loads add-ins per application.
-- `Ribbon.Vsto` makes those three add-ins behave like one product.
+- `Grid`, `Quill`, `Deck`, and `Post` are independent VSTO deployment units because Office loads add-ins per application.
+- `Ribbon.Vsto` makes those add-ins behave like one product.
 - `Ribbon.Broker` is a single per-user process shared by every running Office application.
 - Every ACP agent receives one MCP server that can expose tools from all currently connected Office hosts.
+
+Hosts come in two profiles. Document hosts (`Grid`, `Quill`, `Deck`) anchor each conversation and checkpoint to the open document. Item hosts (`Post` for Outlook Classic) anchor to an account/store context, offer no checkpoints, and may expose irreversible operations that are called out to agents and always require an explicit user confirmation. `IOfficeHost` carries the core surface every host implements; `ICheckpointHost` is the optional capability only document hosts implement.
 
 This keeps failure and deployment boundaries aligned with Office while preserving a unified user experience.
 
 ## Connection sequence
 
 1. An Office add-in starts and connects to the named pipe for its broker protocol version (`Ribbon.Broker.v1` for the current protocol).
-2. It registers a unique host id and its application kind.
+2. It registers a unique host id, its application kind, and its host profile: the context anchor (`document` or `store`), a stable context id and display name, and whether it supports checkpoints.
 3. The user installs and selects an agent in the shared task pane.
 4. The broker launches the agent and performs ACP `initialize` over stdio.
 5. The broker creates an isolated session directory and calls ACP `session/new`.
@@ -24,8 +26,8 @@ This keeps failure and deployment boundaries aligned with Office while preservin
 7. The task pane renders ACP `configOptions` with category `model` and changes them through `session/set_config_option`.
 8. During MCP `initialize`, the proxy asks the primary broker for the live tool catalog. It composes an inspect–act–verify playbook from only those capabilities, with the preferred Office host first.
 9. A later MCP `tools/list` refreshes the live catalog; every listed tool retains its host routing identity, description, strict schema, and mutation annotations.
-10. Before each prompt, the owning VSTO host captures a local checkpoint of the document state that Ribbon tools can mutate.
-11. MCP calls are routed to the VSTO process that owns the selected tool. Destructive definitions require user approval there before execution on that Office application's UI thread. A per-session Auto-approve mode in the task pane can pre-authorize destructive Office tools and relayed ACP permission requests without prompting; it is off by default, requires explicit opt-in, resets to Ask when the agent session changes, and logs each auto-approved action to the transcript.
+10. Before each prompt, the owning VSTO host captures a local checkpoint of the document state that Ribbon tools can mutate. Item hosts such as Outlook skip this step and their task pane hides the checkpoint bar.
+11. MCP calls are routed to the VSTO process that owns the selected tool. Destructive definitions require user approval there before execution on that Office application's UI thread. A per-session Auto-approve mode in the task pane can pre-authorize destructive Office tools and relayed ACP permission requests without prompting; it is off by default, requires explicit opt-in, resets to Ask when the agent session changes, and logs each auto-approved action to the transcript. Irreversible definitions such as `outlook_send_draft` are exempt from Auto-approve and from session memory: they always prompt with an explicit warning that no checkpoint can undo them.
 12. ACP message chunks, thoughts, plans, tool progress, and configuration updates stream back through the broker to the task pane.
 13. Ribbon persists the structured transcript and document/session metadata locally. Reopening a saved conversation uses ACP `session/list` for advisory discovery and `session/resume` or `session/load` only when the agent advertises the corresponding capability.
 
@@ -108,6 +110,8 @@ Checkpoints stay inside the Office trust boundary under `%LOCALAPPDATA%\Ribbon\C
 
 These are Ribbon-tool checkpoints rather than general Office version history. Changes outside the surfaces above, such as VBA projects or Word headers and footers, are not promised to roll back.
 
+Outlook is an item host and does not implement `ICheckpointHost`: its context is a mailbox rather than a document, sent mail cannot be recalled, and its task pane shows no checkpoint bar. The Outlook slice instead leans on the irreversible permission tier so actions that leave the machine are always explicitly confirmed.
+
 An installed ACP agent is still executable code with the permissions of the signed-in user. Production releases should add publisher/signature information to the registry UI and sign Ribbon's own binaries and deployment manifests.
 
 ## Extending Office tools
@@ -115,7 +119,7 @@ An installed ACP agent is still executable code with the permissions of the sign
 Add a tool in the application-specific `IOfficeHost` implementation:
 
 1. Return an `OfficeToolDefinition` with a globally unique name such as `excel_format_range`.
-2. Provide a strict JSON Schema and set `Destructive` accurately.
+2. Provide a strict JSON Schema and set `Destructive` accurately; additionally mark tools whose effects no checkpoint can undo as `Irreversible`.
 3. Handle the name in `InvokeAsync`.
 4. Execute COM access through the Office dispatcher.
 5. Return JSON-safe structured data in `OfficeToolResult.ContentJson`.
@@ -151,3 +155,14 @@ Word tools address the main document story by zero-based character positions, wh
 Slide numbers are one-based and reflect the current presentation order, so agents should refresh context after slide lifecycle changes. Shape mutations use the `shape_name` returned by slide reads and creation results. Geometry is expressed in PowerPoint points. Structured reads return shape identity, type, geometry, text, table values, and chart/table flags so an agent can verify a mutation with a targeted follow-up read.
 
 The native chart tool accepts a bounded category vector and equally sized numeric series. It assigns native PowerPoint chart series directly, avoiding an embedded-workbook activation that would launch Excel from the PowerPoint process. Image insertion accepts only an existing absolute local path and never performs network work. All authoring tools are destructive and all COM work runs through the captured PowerPoint UI synchronization context.
+
+### Outlook tool design
+
+`Post` exposes mailbox work as task-oriented `outlook_*` tools rather than arbitrary COM dispatch, and is the first slice built on the item-host profile:
+
+- The context anchor is the default store: `outlook_get_context` reports profile, mailbox, active folder, and selection, and the registration binds conversations to the mailbox instead of a document path.
+- Inspect tools are bounded: 150 folders per listing, 200 items per folder listing (default 25), and 20,000 characters per message body (default 8,000) with explicit truncation flags.
+- Item identity uses the `entry_id` returned by listings and draft results; agents are instructed to refresh listings rather than guess.
+- Composition is draft-first: create, patch, and re-read an unsent item, and only `outlook_send_draft` delivers mail. Draft mutations are restricted to unsent items in the Drafts folder.
+- `outlook_send_draft` is `Irreversible`: it verifies recipients and content, always prompts regardless of Auto-approve or remembered approvals, and the permission dialog displays an explicit warning that checkpoints cannot undo it.
+- All reads and writes stay inside the default store; there is deliberately no cross-store search, no bulk export, and no raw `Restrict` passthrough in this slice.

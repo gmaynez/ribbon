@@ -18,6 +18,10 @@ internal static class OfficeMcpInstructions
             .Where(definition => definition.Destructive)
             .Select(definition => definition.Name.Trim())
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var irreversibleNames = orderedDefinitions
+            .Where(definition => definition.Irreversible)
+            .Select(definition => definition.Name.Trim())
+            .ToList();
         var instructions = new StringBuilder();
         instructions.AppendLine("Use Ribbon to work directly in the user's currently connected Microsoft Office documents. Choose only tools present in tools/list; never invent an unavailable tool or parameter. Treat every tool description and input schema as authoritative, including for capabilities added after initialization.");
         instructions.AppendLine("Work naturally in a short inspect → act → verify loop: inspect only enough context to identify the target, make the smallest task-oriented change that satisfies the request, then read back the affected state. Treat identifiers and resolved locations returned by tools as authoritative. If the target or destructive intent remains ambiguous after inspection, ask the user instead of guessing. After an error, use its details to adjust the next call rather than repeating the same call unchanged. In the final response, summarize visible changes and disclose anything that could not be verified.");
@@ -41,10 +45,20 @@ internal static class OfficeMcpInstructions
                 case "powerpoint":
                     AppendPowerPoint(instructions, names, destructiveNames);
                     break;
+                case "outlook":
+                    AppendOutlook(instructions, names, destructiveNames);
+                    break;
             }
         }
 
-        if (orderedNames.Any(name => HostPrefix(name) == null))
+        if (irreversibleNames.Count > 0)
+        {
+            instructions.AppendLine();
+            instructions.Append("Irreversible actions that no Ribbon checkpoint can undo: "
+                + string.Join(", ", irreversibleNames) + ". Call them only when the request explicitly asks for the outcome, after verifying the affected state.");
+
+        }
+        else if (orderedNames.Any(name => HostPrefix(name) == null))
         {
             instructions.AppendLine();
             instructions.Append("Additional connected Office tools are available. Follow each tool's description and strict input schema, and apply the same inspect → act → verify discipline.");
@@ -68,6 +82,7 @@ internal static class OfficeMcpInstructions
         if (name.StartsWith("excel_", StringComparison.OrdinalIgnoreCase)) return "excel";
         if (name.StartsWith("word_", StringComparison.OrdinalIgnoreCase)) return "word";
         if (name.StartsWith("powerpoint_", StringComparison.OrdinalIgnoreCase)) return "powerpoint";
+        if (name.StartsWith("outlook_", StringComparison.OrdinalIgnoreCase)) return "outlook";
         return null;
     }
 
@@ -131,6 +146,23 @@ internal static class OfficeMcpInstructions
         if (Has(names, "powerpoint_find_replace")) instructions.AppendLine("- Use powerpoint_find_replace for bounded literal text changes and opt into speaker notes only when the request includes them.");
         if (Has(names, "powerpoint_read_slide") && destructiveNames.Any(name => name.StartsWith("powerpoint_", StringComparison.OrdinalIgnoreCase)))
             instructions.AppendLine("- After a mutation, read the affected slide and verify its title, shape text, geometry, table/chart presence, notes, or other changed state.");
+    }
+
+    private static void AppendOutlook(StringBuilder instructions, ISet<string> names, ISet<string> destructiveNames)
+    {
+        instructions.AppendLine();
+        instructions.AppendLine("Outlook workflow (available outlook_* tools):");
+        instructions.AppendLine("- Use the descriptions and schemas for any additional available Outlook tools not called out below.");
+        instructions.AppendLine("- Outlook has no document checkpoints. Treat reads as the only source of truth and prefer the least invasive action that satisfies the request.");
+        if (Has(names, "outlook_get_context")) instructions.AppendLine("- Call outlook_get_context first to identify the mailbox, active folder, and selection before touching any mail.");
+        if (Has(names, "outlook_list_folders")) instructions.AppendLine("- Use outlook_list_folders to discover real folder paths instead of guessing folder names.");
+        if (Has(names, "outlook_list_items")) instructions.AppendLine("- Use outlook_list_items for a bounded folder listing and take entry_id values from its result for later reads.");
+        if (Has(names, "outlook_read_item")) instructions.AppendLine("- Use outlook_read_item for one item's bounded content; do not bulk-read entire folders when a listing plus a few reads suffice.");
+        if (Has(names, "outlook_create_draft") || Has(names, "outlook_update_draft"))
+            instructions.AppendLine("- Compose email in stages: create a draft, patch it, then read it back to verify recipients, subject, and body before anything is sent.");
+        if (Has(names, "outlook_send_draft"))
+            instructions.AppendLine("- outlook_send_draft is irreversible: it delivers real mail and no checkpoint can undo it. Send only when the user explicitly asked to send, and only after verifying the draft.");
+        if (Has(names, "outlook_delete_draft")) instructions.AppendLine("- Use outlook_delete_draft only for drafts the agent created or that the user explicitly asked to remove.");
     }
 
     private static bool Has(ISet<string> names, string name) => names.Contains(name);

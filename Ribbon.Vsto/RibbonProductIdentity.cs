@@ -10,6 +10,7 @@ namespace Ribbon.Vsto
             if (string.Equals(hostKind, "Excel", StringComparison.OrdinalIgnoreCase)) return "Grid";
             if (string.Equals(hostKind, "Word", StringComparison.OrdinalIgnoreCase)) return "Quill";
             if (string.Equals(hostKind, "PowerPoint", StringComparison.OrdinalIgnoreCase)) return "Deck";
+            if (string.Equals(hostKind, "Outlook", StringComparison.OrdinalIgnoreCase)) return "Post";
             return "Office";
         }
 
@@ -30,6 +31,7 @@ namespace Ribbon.Vsto
             if (string.Equals(hostKind, "Excel", StringComparison.OrdinalIgnoreCase)) return Color.FromArgb(33, 115, 70);
             if (string.Equals(hostKind, "Word", StringComparison.OrdinalIgnoreCase)) return Color.FromArgb(43, 87, 154);
             if (string.Equals(hostKind, "PowerPoint", StringComparison.OrdinalIgnoreCase)) return Color.FromArgb(210, 71, 38);
+            if (string.Equals(hostKind, "Outlook", StringComparison.OrdinalIgnoreCase)) return Color.FromArgb(15, 108, 189);
             return Color.FromArgb(99, 102, 241);
         }
 
@@ -37,6 +39,7 @@ namespace Ribbon.Vsto
         {
             if (string.Equals(hostKind, "Excel", StringComparison.OrdinalIgnoreCase)) return "workbook";
             if (string.Equals(hostKind, "PowerPoint", StringComparison.OrdinalIgnoreCase)) return "presentation";
+            if (string.Equals(hostKind, "Outlook", StringComparison.OrdinalIgnoreCase)) return "mailbox";
             return "document";
         }
 
@@ -48,6 +51,8 @@ namespace Ribbon.Vsto
                 return "Try: “Polish this document and apply heading styles.”";
             if (string.Equals(hostKind, "PowerPoint", StringComparison.OrdinalIgnoreCase))
                 return "Try: “Turn these notes into a clear slide.”";
+            if (string.Equals(hostKind, "Outlook", StringComparison.OrdinalIgnoreCase))
+                return "Try: “Summarize today's unread email and draft replies.”";
             return "Try asking the agent to inspect the open document first.";
         }
     }

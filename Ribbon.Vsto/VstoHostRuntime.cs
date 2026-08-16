@@ -29,6 +29,7 @@ namespace Ribbon.Vsto
         }
 
         public HostRegistration Registration => _host.Registration;
+        public bool SupportsCheckpoints => _host is ICheckpointHost;
         public event EventHandler<SessionUpdateMessage> SessionUpdate;
         internal event EventHandler<ApprovalMode> ApprovalModeChanged;
         internal event EventHandler<AutoApprovalRecord> AutoApproved;
@@ -156,12 +157,22 @@ namespace Ribbon.Vsto
 
         public Task<DocumentCheckpoint> CreateCheckpointAsync(string label)
         {
-            return _host.CreateCheckpointAsync(label, _lifetimeToken);
+            var checkpointHost = _host as ICheckpointHost;
+            if (checkpointHost == null)
+            {
+                throw new NotSupportedException("This Office host does not support document checkpoints.");
+            }
+            return checkpointHost.CreateCheckpointAsync(label, _lifetimeToken);
         }
 
         public Task RestoreCheckpointAsync(DocumentCheckpoint checkpoint)
         {
-            return _host.RestoreCheckpointAsync(checkpoint, _lifetimeToken);
+            var checkpointHost = _host as ICheckpointHost;
+            if (checkpointHost == null)
+            {
+                throw new NotSupportedException("This Office host does not support document checkpoints.");
+            }
+            return checkpointHost.RestoreCheckpointAsync(checkpoint, _lifetimeToken);
         }
 
         public void Dispose()

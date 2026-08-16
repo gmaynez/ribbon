@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 
 namespace Ribbon.Contracts
 {
@@ -8,7 +9,14 @@ namespace Ribbon.Contracts
         public const int Version = 1;
         public const string PipeName = "Ribbon.Broker.v1";
         public static string BrokerMutexName => "Local\\Ribbon.Broker.v" + Version;
-        public const string ProductVersion = "0.1.0";
+        public static string ProductVersion
+        {
+            get
+            {
+                var attribute = typeof(RibbonProtocol).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>();
+                return attribute != null ? attribute.InformationalVersion : "0.1.0";
+            }
+        }
 
         public const string RegisterHost = "host/register";
         public const string UnregisterHost = "host/unregister";
@@ -103,6 +111,13 @@ namespace Ribbon.Contracts
         public string DocumentId { get; set; }
         public string DocumentPath { get; set; }
         public string Version { get; set; }
+
+        // Host profile: document hosts anchor to one open document ("document");
+        // item hosts such as Outlook anchor to an account/store context ("store").
+        public string ContextKind { get; set; }
+        public string ContextId { get; set; }
+        public string ContextName { get; set; }
+        public bool SupportsCheckpoints { get; set; }
     }
 
     public sealed class OfficeToolDefinition
@@ -113,6 +128,10 @@ namespace Ribbon.Contracts
         public string InputSchemaJson { get; set; }
         public bool Destructive { get; set; }
         public string HostKind { get; set; }
+
+        // Irreversible mutations can never be undone by a checkpoint or restore.
+        // They must also be Destructive and always require an explicit user prompt.
+        public bool Irreversible { get; set; }
     }
 
     public sealed class OfficeToolInvocation

@@ -39,6 +39,7 @@ namespace Ribbon.Vsto
         private TableLayoutPanel _agentRow;
         private TableLayoutPanel _conversationHeader;
         private TableLayoutPanel _checkpointBar;
+        private TableLayoutPanel _transcriptLayout;
         private TableLayoutPanel _footer;
         private Label _checkpointLabel;
         private Label _composerHint;
@@ -247,6 +248,7 @@ namespace Ribbon.Vsto
         {
             var surface = new RibbonSurface(_palette) { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 10), Padding = new Padding(12, 9, 12, 12) };
             var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, BackColor = _palette.Surface };
+            _transcriptLayout = layout;
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
@@ -320,6 +322,13 @@ namespace Ribbon.Vsto
             _restoreCheckpoint.AccessibleName = "Restore selected document checkpoint";
             _toolTip.SetToolTip(_restoreCheckpoint, "Restore the open document to the selected checkpoint and start a fresh agent session.");
             _checkpointBar.Controls.Add(_restoreCheckpoint, 2, 0);
+            if (!_runtime.SupportsCheckpoints)
+            {
+                _checkpointBar.Visible = false;
+                _checkpoints.Visible = false;
+                _restoreCheckpoint.Visible = false;
+                if (_transcriptLayout != null) _transcriptLayout.RowStyles[2].Height = 0;
+            }
             return _checkpointBar;
         }
 
@@ -680,9 +689,12 @@ namespace Ribbon.Vsto
                 await EnsureSessionAsync(agent);
                 if (!_session.HasSession) throw new InvalidOperationException("The ACP agent did not create a session.");
                 _workspace.ApplySession(_session, GetSelectedModelName());
-                SetStatus("Creating document checkpoint…", _palette.Accent);
-                var checkpoint = await _runtime.CreateCheckpointAsync(SidebarCheckpoints.LabelFor(text));
-                AddCheckpoint(checkpoint);
+                if (_runtime.SupportsCheckpoints)
+                {
+                    SetStatus("Creating document checkpoint…", _palette.Accent);
+                    var checkpoint = await _runtime.CreateCheckpointAsync(SidebarCheckpoints.LabelFor(text));
+                    AddCheckpoint(checkpoint);
+                }
                 await _runtime.PromptAsync(_session.SessionId, text);
                 _workspace.Persist();
                 SetStatus("Ready", _palette.Success);
@@ -714,6 +726,7 @@ namespace Ribbon.Vsto
         private async Task RestoreSelectedCheckpointAsync()
         {
             DocumentCheckpoint selected = null;
+            if (!_runtime.SupportsCheckpoints) return;
             RibbonUiThread.Run(this, () => selected = _checkpoints.SelectedItem as DocumentCheckpoint);
             if (selected == null || _busy) return;
 
@@ -755,7 +768,7 @@ namespace Ribbon.Vsto
 
         private void AddCheckpoint(DocumentCheckpoint checkpoint)
         {
-            if (checkpoint == null) return;
+            if (checkpoint == null || !_runtime.SupportsCheckpoints) return;
             RibbonUiThread.Run(this, () =>
             {
                 var expired = _checkpointList.Add(checkpoint);

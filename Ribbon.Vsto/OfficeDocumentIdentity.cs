@@ -8,15 +8,20 @@ namespace Ribbon.Vsto
     {
         public static string Get(string hostKind, string documentNameOrPath)
         {
-            if (string.IsNullOrWhiteSpace(documentNameOrPath)) return string.Empty;
+            return Get(hostKind, documentNameOrPath, "document");
+        }
+
+        public static string Get(string hostKind, string value, string label)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return string.Empty;
             var prefix = string.IsNullOrWhiteSpace(hostKind) ? "office" : hostKind.Trim().ToLowerInvariant();
-            var input = prefix + "|" + documentNameOrPath.Trim().ToUpperInvariant();
+            var input = prefix + "|" + value.Trim().ToUpperInvariant();
             using (var algorithm = SHA256.Create())
             {
                 var hash = algorithm.ComputeHash(Encoding.UTF8.GetBytes(input));
                 var builder = new StringBuilder(hash.Length * 2);
-                foreach (var value in hash) builder.Append(value.ToString("x2"));
-                return prefix + "-document-" + builder;
+                foreach (var byteValue in hash) builder.Append(byteValue.ToString("x2"));
+                return prefix + "-" + label + "-" + builder;
             }
         }
     }

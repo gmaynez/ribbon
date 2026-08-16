@@ -15,7 +15,10 @@ Keep that separation intact. Application-specific COM automation belongs in the 
 - `Grid` — Excel VSTO host and Excel tools.
 - `Quill` — Word VSTO host and Word tools.
 - `Deck` — PowerPoint VSTO host and PowerPoint tools.
+- `Post` — Outlook (Classic) VSTO host and Outlook tools; an item host with no checkpoints.
 - `docs/architecture.md` — protocol, process, security, and extension details.
+
+Hosts implement the core `IOfficeHost` surface; only document hosts (`Grid`, `Quill`, `Deck`) implement `ICheckpointHost`. `Post` anchors to the mailbox store instead of a document, and its send tool is the model for the `Irreversible` tier: never auto-approved, never remembered for a session.
 
 The active Excel tool surface is split deliberately:
 

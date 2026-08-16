@@ -10,7 +10,7 @@ using Word = Microsoft.Office.Interop.Word;
 
 namespace Quill.Office
 {
-    internal sealed class QuillOfficeHost : IOfficeHost
+    internal sealed class QuillOfficeHost : ICheckpointHost
     {
         private readonly Word.Application _application;
         private readonly WordAutomationService _automation;
@@ -31,10 +31,12 @@ namespace Quill.Office
             {
                 string path = null;
                 string documentId = null;
+                string documentName = null;
                 try
                 {
                     var document = _application.ActiveDocument;
                     path = document?.FullName;
+                    documentName = document?.Name;
                     var windowHandle = DocumentWindowHandle(document);
                     documentId = OfficeDocumentIdentity.Get("word", windowHandle == 0
                         ? path
@@ -49,7 +51,11 @@ namespace Quill.Office
                     ProcessId = Process.GetCurrentProcess().Id,
                     DocumentId = documentId,
                     DocumentPath = path,
-                    Version = _application.Version
+                    Version = _application.Version,
+                    ContextKind = "document",
+                    ContextId = documentId,
+                    ContextName = documentName,
+                    SupportsCheckpoints = true
                 };
             }
         }

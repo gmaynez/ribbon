@@ -10,7 +10,7 @@ using PowerPoint = Microsoft.Office.Interop.PowerPoint;
 
 namespace Deck.Office
 {
-    internal sealed class DeckOfficeHost : IOfficeHost
+    internal sealed class DeckOfficeHost : ICheckpointHost
     {
         private readonly PowerPoint.Application _application;
         private readonly PowerPointAutomationService _automation;
@@ -31,10 +31,12 @@ namespace Deck.Office
             {
                 string path = null;
                 string documentId = null;
+                string documentName = null;
                 try
                 {
                     var presentation = _application.ActivePresentation;
                     path = presentation?.FullName;
+                    documentName = presentation?.Name;
                     var windowHandle = PresentationWindowHandle(presentation);
                     documentId = OfficeDocumentIdentity.Get("powerpoint", windowHandle == 0
                         ? path
@@ -49,7 +51,11 @@ namespace Deck.Office
                     ProcessId = Process.GetCurrentProcess().Id,
                     DocumentId = documentId,
                     DocumentPath = path,
-                    Version = _application.Version
+                    Version = _application.Version,
+                    ContextKind = "document",
+                    ContextId = documentId,
+                    ContextName = documentName,
+                    SupportsCheckpoints = true
                 };
             }
         }

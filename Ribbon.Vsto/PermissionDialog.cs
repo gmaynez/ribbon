@@ -107,9 +107,10 @@ namespace Ribbon.Vsto
             IWin32Window owner,
             string toolName,
             string argumentsJson,
-            RibbonPalette palette)
+            RibbonPalette palette,
+            bool irreversible = false)
         {
-            var content = BuildOfficePermissionContent(toolName, argumentsJson);
+            var content = BuildOfficePermissionContent(toolName, argumentsJson, irreversible);
             var options = new List<PermissionChoice>
             {
                 new PermissionChoice { OptionId = "allow", Name = content.ConfirmationLabel, Kind = "allow_once" },
@@ -118,10 +119,12 @@ namespace Ribbon.Vsto
             using (var dialog = new PermissionDialog(
                 palette,
                 content.Heading,
-                "Review this document change before it runs.",
+                irreversible
+                    ? "Review this action carefully before it runs. It cannot be undone."
+                    : "Review this document change before it runs.",
                 content.TechnicalDetails,
                 options,
-                true,
+                !irreversible,
                 content))
             {
                 dialog.ShowDialog(owner);
@@ -216,15 +219,15 @@ namespace Ribbon.Vsto
 
             var checkpoint = new Label
             {
-                Text = "Checkpoint saved before this turn. You can restore it from the task pane.",
+                Text = content.Warning ?? "Checkpoint saved before this turn. You can restore it from the task pane.",
                 Dock = DockStyle.Fill,
                 AutoEllipsis = true,
-                ForeColor = _palette.Success,
+                ForeColor = content.Warning != null ? _palette.Danger : _palette.Success,
                 BackColor = _palette.Surface,
-                Font = new Font(Font.FontFamily, 8.4f, FontStyle.Regular),
+                Font = new Font(Font.FontFamily, 8.4f, content.Warning != null ? FontStyle.Bold : FontStyle.Regular),
                 TextAlign = ContentAlignment.MiddleLeft,
                 Margin = new Padding(0),
-                AccessibleName = "Checkpoint available"
+                AccessibleName = content.Warning != null ? "Irreversible action warning" : "Checkpoint available"
             };
             layout.Controls.Add(checkpoint, 0, 1);
 
@@ -350,7 +353,7 @@ namespace Ribbon.Vsto
         private static string FriendlyToolName(string toolName)
         {
             if (string.IsNullOrWhiteSpace(toolName)) return "Change the Office document";
-            var words = toolName.Replace("excel_", string.Empty).Replace("word_", string.Empty).Replace("powerpoint_", string.Empty).Replace('_', ' ');
+            var words = toolName.Replace("excel_", string.Empty).Replace("word_", string.Empty).Replace("powerpoint_", string.Empty).Replace("outlook_", string.Empty).Replace('_', ' ');
             return char.ToUpperInvariant(words[0]) + words.Substring(1);
         }
 
@@ -359,7 +362,7 @@ namespace Ribbon.Vsto
             return string.IsNullOrWhiteSpace(rawJson) ? string.Empty : rawJson;
         }
 
-        private static OfficePermissionContent BuildOfficePermissionContent(string toolName, string argumentsJson)
+        private static OfficePermissionContent BuildOfficePermissionContent(string toolName, string argumentsJson, bool irreversible = false)
         {
             var heading = FriendlyToolName(toolName);
             var arguments = ParseArguments(argumentsJson);
@@ -369,7 +372,10 @@ namespace Ribbon.Vsto
                 Heading = heading,
                 ConfirmationLabel = heading,
                 Summary = summary,
-                TechnicalDetails = PrettyPrintJson(argumentsJson)
+                TechnicalDetails = PrettyPrintJson(argumentsJson),
+                Warning = irreversible
+                    ? "This action is irreversible. Ribbon checkpoints cannot undo it."
+                    : null
             };
         }
 
@@ -449,6 +455,15 @@ namespace Ribbon.Vsto
                 case "powerpoint_set_slide_background":
                     return "Set slide " + StringValue(arguments, "slide_number", "?") + " background to "
                         + StringValue(arguments, "color", "a new color") + ".";
+                case "outlook_create_draft":
+                    return "Create a draft email" + MailSummary(arguments) + ".";
+                case "outlook_update_draft":
+                    return "Update the draft email " + Quoted(StringValue(arguments, "subject"), "with new content") + ".";
+                case "outlook_delete_draft":
+                    return "Delete the draft email " + Quoted(StringValue(arguments, "subject"), "from the Drafts folder") + ".";
+                case "outlook_send_draft":
+                    return "Send the draft email " + Quoted(StringValue(arguments, "subject"), "in the Drafts folder")
+                        + " to its recipients. This cannot be undone.";
                 default:
                     var slide = StringValue(arguments, "slide_number");
                     return heading + (string.IsNullOrWhiteSpace(slide) ? " in the open document." : " on slide " + slide + ".");
@@ -557,6 +572,13 @@ namespace Ribbon.Vsto
             return string.IsNullOrWhiteSpace(position) ? string.Empty : " at position " + position;
         }
 
+        private static string MailSummary(IDictionary<string, object> values)
+        {
+            var summary = FormatTitle(values);
+            var recipients = CollectionCount(values, "to", "recipient", "recipients");
+            return recipients == "0 recipients" ? summary : summary + " for " + recipients;
+        }
+
         private static string FindReplaceScope(IDictionary<string, object> values, string toolName)
         {
             if (!toolName.StartsWith("powerpoint_", StringComparison.OrdinalIgnoreCase)) return " in the document";
@@ -609,6 +631,7 @@ namespace Ribbon.Vsto
             public string ConfirmationLabel { get; set; }
             public string Summary { get; set; }
             public string TechnicalDetails { get; set; }
+            public string Warning { get; set; }
         }
     }
 }

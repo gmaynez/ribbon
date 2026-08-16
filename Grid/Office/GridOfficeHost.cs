@@ -10,7 +10,7 @@ using Excel = Microsoft.Office.Interop.Excel;
 
 namespace Grid.Office
 {
-    internal sealed class GridOfficeHost : IOfficeHost
+    internal sealed class GridOfficeHost : ICheckpointHost
     {
         private readonly Excel.Application _application;
         private readonly ExcelAutomationService _automation;
@@ -31,10 +31,12 @@ namespace Grid.Office
             {
                 string path = null;
                 string documentId = null;
+                string documentName = null;
                 try
                 {
                     var workbook = _application.ActiveWorkbook;
                     path = workbook?.FullName;
+                    documentName = workbook?.Name;
                     var windowHandle = WorkbookWindowHandle(workbook);
                     documentId = OfficeDocumentIdentity.Get("excel", windowHandle == 0
                         ? path
@@ -49,7 +51,11 @@ namespace Grid.Office
                     ProcessId = Process.GetCurrentProcess().Id,
                     DocumentId = documentId,
                     DocumentPath = path,
-                    Version = _application.Version
+                    Version = _application.Version,
+                    ContextKind = "document",
+                    ContextId = documentId,
+                    ContextName = documentName,
+                    SupportsCheckpoints = true
                 };
             }
         }

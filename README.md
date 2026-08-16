@@ -1,6 +1,6 @@
 # Ribbon
 
-Ribbon brings installable ACP coding agents into Microsoft Office. Excel, Word, and PowerPoint each use a thin VSTO add-in, while one shared local broker manages the ACP Registry, agent processes, conversations, permissions, and a unified Office MCP server.
+Ribbon brings installable ACP coding agents into Microsoft Office. Excel, Word, PowerPoint, and Outlook (Classic) each use a thin VSTO add-in, while one shared local broker manages the ACP Registry, agent processes, conversations, permissions, and a unified Office MCP server.
 
 The result is one agent experience across Office without forcing Excel to automate the other applications.
 
@@ -10,13 +10,13 @@ The result is one agent experience across Office without forcing Excel to automa
 - Install Windows binary and `npx` agent distributions. Ribbon provisions a private Node.js LTS runtime when needed and verifies the official Node archive checksum.
 - Launch ACP v1 agents, authenticate them, create sessions, and render message chunks, plans, thoughts, and tool progress inline while a turn runs.
 - Persist theme-independent conversation transcripts with generated titles, agent/model metadata, document binding, New chat, history browsing, and deletion. Ribbon restores native agent context through capability-gated ACP `session/resume` or `session/load`; unavailable and cross-document conversations remain safely reviewable.
-- Gate every destructive Office MCP tool in Ribbon as well as relaying ACP permission requests, with an option to remember an approval for that action during the active agent session. A per-session Auto-approve toggle in the task pane lets you pre-authorize document changes and agent requests for one session; it is off by default, resets to Ask on new conversations or restart, and logs every auto-approved action in the transcript.
-- Capture a local document checkpoint before each prompt and restore an earlier turn from the task pane; Ribbon saves a safety checkpoint first and restarts the agent session after restore.
+- Gate every destructive Office MCP tool in Ribbon as well as relaying ACP permission requests, with an option to remember an approval for that action during the active agent session. A per-session Auto-approve toggle in the task pane lets you pre-authorize document changes and agent requests for one session; it is off by default, resets to Ask on new conversations or restart, and logs every auto-approved action in the transcript. Irreversible tools such as `outlook_send_draft` are never auto-approved and always require an explicit confirmation.
+- Capture a local document checkpoint before each prompt and restore an earlier turn from the task pane; Ribbon saves a safety checkpoint first and restarts the agent session after restore. Checkpoints apply to the document hosts (Excel, Word, PowerPoint); Outlook is an item host and its task pane has no checkpoint bar.
 - Populate an agent-driven model selector from ACP session configuration options and keep it synchronized when the agent changes configuration.
 - Give every agent a local stdio MCP server named `ribbon-office`.
 - Compose MCP guidance from the tools currently connected to that agent session, with the launching Office host's workflow first.
 - Route MCP calls over a current-user named pipe to every connected Office host.
-- Use a shared host-branded task pane: **Ribbon Grid for Excel**, **Ribbon Quill for Word**, and **Ribbon Deck for PowerPoint**.
+- Use a shared host-branded task pane: **Ribbon Grid for Excel**, **Ribbon Quill for Word**, **Ribbon Deck for PowerPoint**, and **Ribbon Post for Outlook**.
 - Reopen a closed task pane from the **Ribbon** group on the Office **Home** tab.
 - Match the Windows/Office light or dark appearance with a shared DPI-aware visual system.
 
@@ -27,6 +27,7 @@ Included Office tools:
 | Excel | context, list sheets, read/write values and formulas, clear/format ranges, add sheets, create tables and charts |
 | Word | context, bounded reads, headings, text edits, find/replace, formatting, lists, tables, comments, page breaks |
 | PowerPoint | context, structured slide reads, slide lifecycle, text and shapes, formatting, images, tables, charts, notes, backgrounds, find/replace |
+| Outlook | context, folders, item listings, bounded mail reads, drafts (create/update/delete), irreversible send |
 
 ### Excel agent tools
 
@@ -84,6 +85,18 @@ Deck exposes presentation tasks and structured slide state instead of arbitrary 
 
 PowerPoint coordinates and dimensions are measured in points. Use one-based slide numbers from a recent context/list result and target shapes by the returned `shape_name`. Shape formatting is patch-based, so omitted properties are preserved. Local images must already exist at an absolute path; Deck does not perform downloads inside PowerPoint.
 
+### Outlook agent tools
+
+Post is Ribbon's first item host: its context anchor is the default mailbox rather than a document, it offers no checkpoints, and mail leaves the machine only through an explicit irreversible send:
+
+| Capability | Tools |
+| --- | --- |
+| Inspect | `outlook_get_context`, `outlook_list_folders`, `outlook_list_items`, `outlook_read_item` |
+| Drafts | `outlook_create_draft`, `outlook_update_draft`, `outlook_delete_draft` |
+| Send | `outlook_send_draft` (irreversible) |
+
+Folder listings are bounded to 150 folders, item listings to 200 items (default 25), and message bodies to 20,000 characters per read (default 8,000). Draft changes are restricted to unsent items in the Drafts folder, and `outlook_send_draft` verifies recipients and content first — then delivers real mail that no checkpoint can undo, so it always prompts regardless of the Auto-approve setting.
+
 ## Architecture
 
 ```mermaid
@@ -91,6 +104,7 @@ flowchart LR
     E["Excel VSTO"] -->|"current-user pipe"| B["Ribbon Broker"]
     W["Word VSTO"] -->|"current-user pipe"| B
     P["PowerPoint VSTO"] -->|"current-user pipe"| B
+    O["Outlook VSTO"] -->|"current-user pipe"| B
     B -->|"ACP over stdio"| A["Installed ACP agent"]
     A -->|"MCP over stdio"| M["Ribbon Office MCP proxy"]
     M -->|"current-user pipe"| B
@@ -103,7 +117,7 @@ The add-ins contain only UI and application-specific COM operations. The .NET 10
 
 Requirements:
 
-- Windows with desktop Excel, Word, and PowerPoint
+- Windows with desktop Excel, Word, PowerPoint, and Outlook (Classic)
 - Visual Studio with **Office/SharePoint development** tools
 - .NET Framework 4.8 targeting pack
 - .NET 10 runtime for the broker
@@ -143,6 +157,7 @@ Agent state is stored under `%LOCALAPPDATA%\Ribbon`:
 - `Grid` — Excel host adapter
 - `Quill` — Word host adapter
 - `Deck` — PowerPoint host adapter
+- `Post` — Outlook (Classic) host adapter
 
 ## Scope and next work
 

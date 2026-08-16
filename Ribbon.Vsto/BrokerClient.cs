@@ -213,12 +213,13 @@ namespace Ribbon.Vsto
                     case RibbonProtocol.InvokeTool:
                         var invocation = JsonCodec.Deserialize<OfficeToolInvocation>(envelope.Payload);
                         OfficeToolResult result;
-                        if (!await AuthorizeDestructiveToolAsync(invocation).ConfigureAwait(false))
+                        var denial = await AuthorizeToolAsync(invocation).ConfigureAwait(false);
+                        if (denial != null)
                         {
                             result = new OfficeToolResult
                             {
                                 Success = false,
-                                Error = "The user did not allow this document-changing Office action."
+                                Error = denial
                             };
                         }
                         else
@@ -294,20 +295,64 @@ namespace Ribbon.Vsto
             }
         }
 
-        private async Task<bool> AuthorizeDestructiveToolAsync(OfficeToolInvocation invocation)
+        /// <summary>
+        /// Returns null when the invocation is authorized, or a denial message that
+        /// must be surfaced to the agent as a failed tool result.
+        /// </summary>
+        private async Task<string> AuthorizeToolAsync(OfficeToolInvocation invocation)
         {
             var definition = _host.GetTools().FirstOrDefault(tool =>
                 string.Equals(tool.Name, invocation.ToolName, StringComparison.OrdinalIgnoreCase));
-            if (definition == null || !definition.Destructive) return true;
+            if (definition == null) return null;
+            if (!definition.Destructive && !definition.Irreversible) return null;
+
+            // Irreversible actions can never be undone by a checkpoint or restore, so
+            // they always require an explicit confirmation: auto-approval and session
+            // memory are deliberately unavailable for them.
+            if (definition.Irreversible)
+            {
+                await _permissionDialogGate.WaitAsync(_closed.Token).ConfigureAwait(false);
+                try
+                {
+                    var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    _ui.Post(_ =>
+                    {
+                        try
+                        {
+                            var allowed = PermissionDialog.ShowDestructiveTool(
+                                Form.ActiveForm,
+                                invocation.ToolName,
+                                invocation.ArgumentsJson,
+                                RibbonPalette.Detect(),
+                                irreversible: true);
+                            completion.TrySetResult(!allowed.Cancelled);
+                        }
+                        catch (Exception exception)
+                        {
+                            completion.TrySetException(exception);
+                        }
+                    }, null);
+                    using (_closed.Token.Register(() => completion.TrySetCanceled()))
+                    {
+                        return await completion.Task.ConfigureAwait(false)
+                            ? null
+                            : "The user did not allow this irreversible Office action.";
+                    }
+                }
+                finally
+                {
+                    _permissionDialogGate.Release();
+                }
+            }
 
             if (_approvalMode == ApprovalMode.Auto)
             {
                 RaiseAutoApproved("office", invocation.ToolName, invocation.ArgumentsJson);
-                return true;
+                return null;
             }
 
             var permissionKey = PermissionKey("office", invocation.ToolName);
-            if (IsRemembered(permissionKey)) return true;
+            if (IsRemembered(permissionKey)) return null;
 
             await _permissionDialogGate.WaitAsync(_closed.Token).ConfigureAwait(false);
             try
@@ -332,7 +377,9 @@ namespace Ribbon.Vsto
                 }, null);
                 using (_closed.Token.Register(() => completion.TrySetCanceled()))
                 {
-                    return await completion.Task.ConfigureAwait(false);
+                    return await completion.Task.ConfigureAwait(false)
+                        ? null
+                        : "The user did not allow this document-changing Office action.";
                 }
             }
             finally
