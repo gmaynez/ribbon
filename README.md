@@ -107,7 +107,7 @@ Requirements:
 - Visual Studio with **Office/SharePoint development** tools
 - .NET Framework 4.8 targeting pack
 - .NET 10 runtime for the broker
-- [Inno Setup 6](https://jrsoftware.org/isinfo.php) to compile the per-user installer
+- [Inno Setup 7](https://jrsoftware.org/isinfo.php) to compile the per-user installer
 
 Build the complete solution from a Visual Studio developer shell:
 
