@@ -15,7 +15,7 @@ concurrency:
 jobs:
   release:
     name: Build and release
-    runs-on: windows-2022
+    runs-on: windows-2025-vs2026
     timeout-minutes: 30
     environment: release
 
@@ -53,6 +53,40 @@ jobs:
 
           "version=$($env:RELEASE_TAG.Substring(1))" | Add-Content -Path $env:GITHUB_OUTPUT
           "prerelease=$($env:RELEASE_TAG.Contains('-').ToString().ToLowerInvariant())" | Add-Content -Path $env:GITHUB_OUTPUT
+
+      - name: Install and verify the VSTO runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $installer = Join-Path $env:RUNNER_TEMP 'vstor_redist.exe'
+          Invoke-WebRequest `
+            -Uri 'https://go.microsoft.com/fwlink/?linkid=140384' `
+            -OutFile $installer
+
+          $signature = Get-AuthenticodeSignature -LiteralPath $installer
+          if ($signature.Status -ne 'Valid' -or
+              $signature.SignerCertificate.Subject -notmatch '(^|, )O=Microsoft Corporation(,|$)') {
+            throw "The VSTO runtime installer did not have a valid Microsoft signature: $($signature.Status)."
+          }
+
+          $process = Start-Process `
+            -FilePath $installer `
+            -ArgumentList '/quiet', '/norestart' `
+            -Wait `
+            -PassThru
+          if ($process.ExitCode -notin @(0, 1638, 3010)) {
+            throw "The VSTO runtime installer failed with exit code $($process.ExitCode)."
+          }
+
+          $frameworkPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          & $frameworkPowerShell -NoLogo -NoProfile -NonInteractive -Command @'
+          [Reflection.Assembly]::Load(
+            'Microsoft.VisualStudio.Tools.Applications.Hosting, Version=10.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a') | Out-Null
+          '@
+          if ($LASTEXITCODE -ne 0) {
+            throw 'The VSTO Hosting assembly is still unavailable to .NET Framework after installing the runtime.'
+          }
 
       - name: Import the release-signing certificate
         id: certificate
