@@ -231,7 +231,7 @@ if (-not $SkipInstaller) {
     }
 
     $iss = Join-Path $PSScriptRoot 'Ribbon.iss'
-    & $iscc '--quiet-progress' $iss "/DAppVersion=$Version" "/DSourceDir=$installerRoot" "/O$artifactsRoot"
+    & $iscc '/Qp' $iss "/DAppVersion=$Version" "/DSourceDir=$installerRoot" "/O$artifactsRoot"
     if ($LASTEXITCODE -ne 0) { throw 'Inno Setup compilation failed.' }
 
     Remove-Item -LiteralPath $installerRoot -Recurse -Force
