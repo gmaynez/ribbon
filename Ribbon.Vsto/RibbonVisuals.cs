@@ -336,7 +336,7 @@ namespace Ribbon.Vsto
             _palette = palette;
             BackColor = palette.Surface;
             Padding = new Padding(1);
-            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
         }
 
         public int CornerRadius { get; set; } = 9;
@@ -364,6 +364,18 @@ namespace Ribbon.Vsto
             }
         }
 
+        protected override void SetBoundsCore(int x, int y, int width, int height, BoundsSpecified specified)
+        {
+            var previousBounds = Bounds;
+            base.SetBoundsCore(x, y, width, height, specified);
+            if (Parent == null || previousBounds == Bounds) return;
+
+            // A TableLayoutPanel does not reliably erase the area exposed when a
+            // child shrinks. Repaint both footprints so old rounded borders cannot
+            // remain behind while the splitter is dragged.
+            Parent.Invalidate(Rectangle.Union(previousBounds, Bounds), true);
+        }
+
         protected override void OnPaint(PaintEventArgs e)
         {
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
@@ -374,6 +386,43 @@ namespace Ribbon.Vsto
             {
                 e.Graphics.FillPath(fill, path);
                 e.Graphics.DrawPath(border, path);
+            }
+            base.OnPaint(e);
+        }
+    }
+
+    internal sealed class RibbonSplitter : Control
+    {
+        private readonly RibbonPalette _palette;
+        private bool _hovered;
+
+        public RibbonSplitter(RibbonPalette palette)
+        {
+            _palette = palette;
+            Cursor = Cursors.SizeNS;
+            BackColor = palette.Background;
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { _hovered = true; Invalidate(); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { _hovered = false; Invalidate(); base.OnMouseLeave(e); }
+        protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+        protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using (var background = new SolidBrush(_palette.Background)) e.Graphics.FillRectangle(background, ClientRectangle);
+            var gripWidth = Math.Max(12, Math.Min(44, Width - 16));
+            var grip = new Rectangle((Width - gripWidth) / 2, (Height - 4) / 2, gripWidth, 4);
+            using (var path = RibbonDrawing.RoundRectangle(grip, 2))
+            using (var fill = new SolidBrush(_hovered || Focused ? _palette.MutedText : _palette.Border))
+            {
+                e.Graphics.FillPath(fill, path);
+            }
+            if (Focused && ShowFocusCues)
+            {
+                ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(grip, 3, 3));
             }
             base.OnPaint(e);
         }

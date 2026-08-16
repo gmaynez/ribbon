@@ -10,6 +10,11 @@ namespace Ribbon.Vsto
 {
     public sealed class RibbonSidebarControl : UserControl
     {
+        private const float SplitterHeight = 12f;
+        private const float ComposerDefaultHeight = 116f;
+        private const float ComposerMinimumHeight = 96f;
+        private const float TranscriptMinimumHeight = 160f;
+
         private readonly VstoHostRuntime _runtime;
         private readonly SidebarSession _session;
         private readonly ConversationWorkspace _workspace;
@@ -41,6 +46,10 @@ namespace Ribbon.Vsto
         private TableLayoutPanel _checkpointBar;
         private TableLayoutPanel _transcriptLayout;
         private TableLayoutPanel _footer;
+        private RibbonSplitter _splitter;
+        private bool _splitterDragging;
+        private int _splitterDragStartScreenY;
+        private float _splitterDragStartComposerHeight;
         private Label _checkpointLabel;
         private Label _composerHint;
         private string _modelConfigId;
@@ -132,19 +141,21 @@ namespace Ribbon.Vsto
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
-                RowCount = 4,
+                RowCount = 5,
                 Padding = new Padding(12),
                 BackColor = _palette.Background
             };
             _rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 184));
             _rootLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            _rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 116));
+            _rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, SplitterHeight));
+            _rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ComposerDefaultHeight));
             _rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
 
             _rootLayout.Controls.Add(BuildHeader(), 0, 0);
             _rootLayout.Controls.Add(BuildTranscript(), 0, 1);
-            _rootLayout.Controls.Add(BuildComposer(), 0, 2);
-            _rootLayout.Controls.Add(BuildFooter(), 0, 3);
+            _rootLayout.Controls.Add(BuildSplitter(), 0, 2);
+            _rootLayout.Controls.Add(BuildComposer(), 0, 3);
+            _rootLayout.Controls.Add(BuildFooter(), 0, 4);
             Controls.Add(_rootLayout);
         }
 
@@ -246,7 +257,7 @@ namespace Ribbon.Vsto
 
         private Control BuildTranscript()
         {
-            var surface = new RibbonSurface(_palette) { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 10), Padding = new Padding(12, 9, 12, 12) };
+            var surface = new RibbonSurface(_palette) { Dock = DockStyle.Fill, Margin = new Padding(0), Padding = new Padding(12, 9, 12, 12) };
             var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, BackColor = _palette.Surface };
             _transcriptLayout = layout;
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
@@ -382,6 +393,83 @@ namespace Ribbon.Vsto
             return surface;
         }
 
+        private Control BuildSplitter()
+        {
+            _splitter = new RibbonSplitter(_palette) { Dock = DockStyle.Fill, Margin = new Padding(0), TabStop = true };
+            _splitter.AccessibleName = "Divider between the conversation and the prompt";
+            _toolTip.SetToolTip(_splitter, "Drag or press the arrow keys to resize the conversation and prompt areas. Double-click to reset.");
+            _splitter.MouseDown += (sender, args) =>
+            {
+                if (args.Button != MouseButtons.Left) return;
+                _splitterDragging = true;
+                _splitterDragStartScreenY = Cursor.Position.Y;
+                _splitterDragStartComposerHeight = _rootLayout.RowStyles[3].Height;
+                _splitter.Capture = true;
+                _splitter.Focus();
+            };
+            _splitter.MouseMove += (sender, args) =>
+            {
+                if (!_splitterDragging) return;
+                var dragDistance = Cursor.Position.Y - _splitterDragStartScreenY;
+                ApplyComposerHeight(_splitterDragStartComposerHeight - dragDistance);
+            };
+            _splitter.MouseUp += (sender, args) =>
+            {
+                if (args.Button != MouseButtons.Left) return;
+                EndSplitterDrag();
+            };
+            _splitter.MouseCaptureChanged += (sender, args) =>
+            {
+                if (!_splitter.Capture) EndSplitterDrag();
+            };
+            _splitter.MouseDoubleClick += (sender, args) =>
+            {
+                if (args.Button != MouseButtons.Left) return;
+                ApplyComposerHeight(ComposerDefaultHeight);
+            };
+            _splitter.KeyDown += (sender, args) =>
+            {
+                var step = (args.Modifiers & Keys.Shift) == Keys.Shift ? 48f : 12f;
+                switch (args.KeyCode)
+                {
+                    case Keys.Up:
+                    case Keys.Left:
+                        args.SuppressKeyPress = true;
+                        ApplyComposerHeight(_rootLayout.RowStyles[3].Height + step);
+                        break;
+                    case Keys.Down:
+                    case Keys.Right:
+                        args.SuppressKeyPress = true;
+                        ApplyComposerHeight(_rootLayout.RowStyles[3].Height - step);
+                        break;
+                    case Keys.Home:
+                        args.SuppressKeyPress = true;
+                        ApplyComposerHeight(ComposerDefaultHeight);
+                        break;
+                }
+            };
+            return _splitter;
+        }
+
+        private void EndSplitterDrag()
+        {
+            if (!_splitterDragging) return;
+            _splitterDragging = false;
+            if (_splitter != null && _splitter.Capture) _splitter.Capture = false;
+            if (_splitter != null) _splitter.Invalidate();
+        }
+
+        private void ApplyComposerHeight(float height)
+        {
+            if (_rootLayout == null) return;
+            var fixedHeight = _rootLayout.RowStyles[0].Height + _rootLayout.RowStyles[2].Height + _rootLayout.RowStyles[4].Height;
+            var available = _rootLayout.ClientSize.Height - _rootLayout.Padding.Vertical - fixedHeight;
+            var maximum = Math.Max(ComposerMinimumHeight, available - TranscriptMinimumHeight);
+            var clamped = Math.Max(ComposerMinimumHeight, Math.Min(maximum, height));
+            if (Math.Abs(_rootLayout.RowStyles[3].Height - clamped) < 0.5f) return;
+            _rootLayout.RowStyles[3].Height = clamped;
+        }
+
         private Control BuildFooter()
         {
             _footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 5, BackColor = _palette.Background, Margin = new Padding(0) };
@@ -429,6 +517,7 @@ namespace Ribbon.Vsto
         private void ApplyResponsiveLayout()
         {
             if (_rootLayout == null) return;
+            ApplyComposerHeight(_rootLayout.RowStyles[3].Height);
             var compact = ClientSize.Width > 0 && ClientSize.Width < 380;
             _rootLayout.Padding = compact ? new Padding(8) : new Padding(12);
             if (_agentRow != null) _agentRow.ColumnStyles[1].Width = compact ? 84 : 94;
