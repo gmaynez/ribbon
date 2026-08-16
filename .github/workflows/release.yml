@@ -60,35 +60,60 @@ jobs:
         env:
           CERTIFICATE_BASE64: ${{ secrets.RIBBON_SIGNING_CERTIFICATE_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.RIBBON_SIGNING_CERTIFICATE_PASSWORD }}
+          IS_PRERELEASE: ${{ steps.release.outputs.prerelease }}
         run: |
           $ErrorActionPreference = 'Stop'
 
-          if ([string]::IsNullOrWhiteSpace($env:CERTIFICATE_BASE64) -or
-              [string]::IsNullOrWhiteSpace($env:CERTIFICATE_PASSWORD)) {
-            throw 'Configure RIBBON_SIGNING_CERTIFICATE_BASE64 and RIBBON_SIGNING_CERTIFICATE_PASSWORD in the release environment before creating a release tag.'
+          $hasCertificate = -not [string]::IsNullOrWhiteSpace($env:CERTIFICATE_BASE64)
+          $hasPassword = -not [string]::IsNullOrWhiteSpace($env:CERTIFICATE_PASSWORD)
+          if ($hasCertificate -ne $hasPassword) {
+            throw 'Configure both release-signing secrets or leave both unset.'
           }
 
-          $bytes = [Convert]::FromBase64String($env:CERTIFICATE_BASE64)
-          $flags = [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::PersistKeySet -bor
-                   [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::UserKeySet
-          $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
-            $bytes,
-            $env:CERTIFICATE_PASSWORD,
-            $flags)
+          if ($hasCertificate) {
+            $bytes = [Convert]::FromBase64String($env:CERTIFICATE_BASE64)
+            $flags = [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::PersistKeySet -bor
+                     [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::UserKeySet
+            $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
+              $bytes,
+              $env:CERTIFICATE_PASSWORD,
+              $flags)
+
+            if (-not $certificate.HasPrivateKey) {
+              throw 'The release-signing certificate does not contain a private key.'
+            }
+
+            $store = [System.Security.Cryptography.X509Certificates.X509Store]::new(
+              [System.Security.Cryptography.X509Certificates.StoreName]::My,
+              [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
+            try {
+              $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+              $store.Add($certificate)
+            }
+            finally {
+              $store.Dispose()
+            }
+            'development=false' | Add-Content -Path $env:GITHUB_OUTPUT
+          }
+          elseif ($env:IS_PRERELEASE -eq 'true') {
+            $certificate = New-SelfSignedCertificate `
+              -Type CodeSigningCert `
+              -Subject 'CN=Ribbon Prerelease Test Build' `
+              -FriendlyName 'Ribbon Prerelease Test Build' `
+              -CertStoreLocation 'Cert:\CurrentUser\My' `
+              -KeyAlgorithm RSA `
+              -KeyLength 2048 `
+              -HashAlgorithm SHA256 `
+              -KeyExportPolicy NonExportable `
+              -NotAfter (Get-Date).AddDays(30)
+            'development=true' | Add-Content -Path $env:GITHUB_OUTPUT
+          }
+          else {
+            throw 'Stable releases require RIBBON_SIGNING_CERTIFICATE_BASE64 and RIBBON_SIGNING_CERTIFICATE_PASSWORD in the release environment.'
+          }
 
           if (-not $certificate.HasPrivateKey) {
             throw 'The release-signing certificate does not contain a private key.'
-          }
-
-          $store = [System.Security.Cryptography.X509Certificates.X509Store]::new(
-            [System.Security.Cryptography.X509Certificates.StoreName]::My,
-            [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
-          try {
-            $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-            $store.Add($certificate)
-          }
-          finally {
-            $store.Dispose()
           }
 
           "RIBBON_CERT_THUMBPRINT=$($certificate.Thumbprint)" | Add-Content -Path $env:GITHUB_ENV
@@ -116,6 +141,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
           IS_PRERELEASE: ${{ steps.release.outputs.prerelease }}
+          IS_DEVELOPMENT_SIGNING: ${{ steps.certificate.outputs.development }}
         run: |
           $assets = Get-ChildItem 'artifacts\release' -File |
             Sort-Object Name |
@@ -128,6 +154,12 @@ jobs:
             '--generate-notes'
           )
           if ($env:IS_PRERELEASE -eq 'true') { $arguments += '--prerelease' }
+          if ($env:IS_DEVELOPMENT_SIGNING -eq 'true') {
+            $arguments += @(
+              '--notes',
+              "> [!WARNING]`n> This prerelease is signed with a temporary self-signed certificate. Windows and Office will show an untrusted publisher warning. Use it only for testing."
+            )
+          }
           $arguments += $assets
 
           gh @arguments

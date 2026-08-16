@@ -4,15 +4,15 @@ Ribbon releases are built by `.github/workflows/release.yml`. The workflow runs 
 
 ## Release contract
 
-- Tags use semantic versioning in the form `v1.MINOR.PATCH`, such as `v1.2.0`. A prerelease suffix such as `v1.2.0-rc.1` is supported and creates a GitHub prerelease.
+- Tags use semantic versioning in the form `v1.MINOR.PATCH`, such as `v1.2.0`. A suffix such as `v1.2.0-alpha.1`, `v1.2.0-beta.1`, or `v1.2.0-rc.1` creates a GitHub prerelease. When production signing secrets are absent, prereleases use a temporary self-signed manifest certificate and carry an untrusted-test-build warning.
 - The tagged commit must be contained in `origin/main`. A matching tag on another branch fails before the build.
-- The workflow performs a complete Release build, runs the broker tests, verifies that each VSTO application manifest includes the broker runtime files, and refuses to publish unsigned manifests.
+- The workflow performs a complete Release build, runs the broker tests, verifies that each VSTO application manifest includes the broker runtime files, and refuses to publish unsigned manifests. Stable releases additionally require the configured release-signing certificate.
 - It then publishes a self-contained `win-x64` broker and compiles the per-user Inno Setup installer.
 - The GitHub Release contains `Ribbon-Setup-vVERSION.exe`, separate Grid, Quill, Deck, and Post ZIP files, and `SHA256SUMS.txt`.
 
 ## One-time GitHub configuration
 
-Create a GitHub Actions environment named `release`. Add protection rules or required reviewers if releases should require approval, then add these environment secrets:
+Create a GitHub Actions environment named `release`. Add protection rules or required reviewers if releases should require approval. Stable releases require these environment secrets; prereleases use them when present and otherwise fall back to an ephemeral self-signed certificate:
 
 - `RIBBON_SIGNING_CERTIFICATE_BASE64` — a Base64-encoded, publicly trusted code-signing PFX containing its private key.
 - `RIBBON_SIGNING_CERTIFICATE_PASSWORD` — the PFX password.
@@ -49,7 +49,7 @@ For a local packaging check, use the explicit development-only switch. This reli
 
 Inno Setup 7 must be installed to compile `eng\Ribbon.iss`. The 64-bit compiler is preferred (`%ProgramFiles%\Inno Setup 7\ISCC.exe`). Pass `-SkipInstaller` to produce only the host ZIP files.
 
-Output signed with a local development certificate is for pipeline development only and must not be distributed as a Ribbon release.
+Output signed with a local or workflow-generated development certificate is for testing only. Windows and Office will identify its publisher as untrusted, and it must not be represented as a stable Ribbon release.
 
 ## End-user installer
 
